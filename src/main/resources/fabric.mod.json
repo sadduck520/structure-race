@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "structure_race",
+	"version": "${version}",
+	"name": "Structure Race",
+	"description": "结构竞速 (Structure Race) V2.0 - 全结构/群系探索积分竞速模组：发现各种结构与稀有群系赚取积分，率先达到 100 分者获胜。",
+	"authors": [
+		"YourName"
+	],
+	"contact": {},
+	"license": "MIT",
+	"icon": "assets/structure_race/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.example.structurerace.StructureRaceMod"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.15.11",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	}
+}
