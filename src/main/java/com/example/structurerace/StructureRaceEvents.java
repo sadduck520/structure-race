@@ -277,8 +277,13 @@ public final class StructureRaceEvents {
             state.discoveredBiomes.addAll(pd.discoveredBiomes);
             state.totalScore = pd.totalScore;
             state.won = pd.won;
+            state.killCount = pd.killCount;
+            state.lastFindTime = pd.lastFindTime;
         }
-        state.lastFindTime = overworld.getTime();
+        // 仅首次加入（无持久化记录）时初始化指引计时，避免重进重置
+        if (state.lastFindTime == 0) {
+            state.lastFindTime = overworld.getTime();
+        }
 
         // 比赛进行中：无队伍玩家 = 观众（旁观者）
         StructureRaceState.TeamData team = saveState.getTeamByMember(player.getUuid());
@@ -312,6 +317,8 @@ public final class StructureRaceEvents {
         if (objective != null && key != null) {
             scoreboard.resetPlayerScore(key, objective);
         }
+        // 移除内存状态：重进时从持久化数据干净重建，保证断线重连与服务器重启行为一致
+        PLAYER_STATES.remove(player.getUuid());
     }
 
     // ==================== 机制1：跑图里程计分 ====================
@@ -332,8 +339,9 @@ public final class StructureRaceEvents {
                     StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
                     if (team != null) {
                         team.totalScore += 1;
-                        saveState.markDirty();
                         state.lastFindTime = player.getServerWorld().getTime();
+                        saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
+                        saveState.markDirty();
                         broadcastScore(player, team, "长途跋涉", 1, team.totalScore);
                         updateTeamScoreboard(player.server, team);
                         checkWinCondition(player, state, team, saveState);
@@ -367,11 +375,14 @@ public final class StructureRaceEvents {
 
         if (state.killCount >= MAX_KILLS) return;
         state.killCount++;
+        StructureRaceState.PlayerPersistentData pd = saveState.getPlayerData(killer.getUuid());
+        pd.killCount = state.killCount; // 即使未到加分点也持久化，防止断线丢失
 
         if (state.killCount % KILLS_PER_POINT == 0) {
             team.totalScore += 1;
+            pd.lastFindTime = killer.getServerWorld().getTime();
+            state.lastFindTime = pd.lastFindTime;
             saveState.markDirty();
-            state.lastFindTime = killer.getServerWorld().getTime();
             broadcastScore(killer, team, "消灭怪物浪潮", 1, team.totalScore);
             updateTeamScoreboard(killer.server, team);
             checkWinCondition(killer, state, team, saveState);
@@ -388,7 +399,8 @@ public final class StructureRaceEvents {
         String cur = current.getValue().getPath(); // "overworld" / "the_nether" / "the_end"
         String last = state.lastDimension;
         state.lastDimension = cur;
-        if (last == null || last.equals(cur)) return; // 首次加入或未变化
+        // 维度未变化则不重复处理；last==null（首次加入/重启后）时仍需检查当前维度是否应奖励
+        if (last != null && last.equals(cur)) return;
 
         StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
         if (team == null) return;
@@ -409,6 +421,7 @@ public final class StructureRaceEvents {
         team.totalScore += score;
         saveState.markDirty();
         state.lastFindTime = player.getServerWorld().getTime();
+        saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
         broadcastScore(player, team, "踏入" + dimName, score, team.totalScore);
         updateTeamScoreboard(player.server, team);
         checkWinCondition(player, state, team, saveState);
@@ -565,6 +578,7 @@ public final class StructureRaceEvents {
             team.totalScore += scoreValue;
             state.lastScoreGameTime = gameTime;
             state.lastFindTime = gameTime;
+            saveState.getPlayerData(player.getUuid()).lastFindTime = gameTime;
             saveState.markDirty();
 
             updateTeamScoreboard(player.server, team);
@@ -609,6 +623,7 @@ public final class StructureRaceEvents {
         team.discoveredBiomes.add(biomeId);
         team.totalScore += scoreValue;
         state.lastFindTime = gameTime;
+        saveState.getPlayerData(player.getUuid()).lastFindTime = gameTime;
         saveState.markDirty();
 
         updateTeamScoreboard(player.server, team);
@@ -872,6 +887,12 @@ public final class StructureRaceEvents {
         if (oldTeam != null && oldTeam != newTeam) {
             oldTeam.members.remove(player.getUuid());
             removePlayerFromScoreboardTeam(player, oldTeam);
+            // 换队：击杀进度清零（个人击杀数归属当前队伍）
+            PlayerState ps = PLAYER_STATES.get(player.getUuid());
+            if (ps != null) {
+                ps.killCount = 0;
+                state.getPlayerData(player.getUuid()).killCount = 0;
+            }
         }
 
         newTeam.members.add(player.getUuid());

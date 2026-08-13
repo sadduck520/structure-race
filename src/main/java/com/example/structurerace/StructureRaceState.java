@@ -62,6 +62,12 @@ public final class StructureRaceState extends PersistentState {
 
         /** 是否已获胜 */
         public boolean won;
+
+        /** 击杀计数（机制2，持久化以支持跨重启/重连保留） */
+        public int killCount;
+
+        /** 上次任何加分的时间（tick）（机制6，持久化避免重进重置） */
+        public long lastFindTime;
     }
 
     // ==================== 全局去重（跨队伍独占） ====================
@@ -181,6 +187,8 @@ public final class StructureRaceState extends PersistentState {
             p.putUuid("uuid", entry.getKey());
             p.putInt("totalScore", entry.getValue().totalScore);
             p.putBoolean("won", entry.getValue().won);
+            p.putInt("killCount", entry.getValue().killCount);
+            p.putLong("lastFindTime", entry.getValue().lastFindTime);
             p.put("structures", stringSetToNbt(entry.getValue().discoveredStructures));
             p.put("biomes", stringSetToNbt(entry.getValue().discoveredBiomes));
             players.add(p);
@@ -241,6 +249,8 @@ public final class StructureRaceState extends PersistentState {
                 PlayerPersistentData d = new PlayerPersistentData();
                 d.totalScore = p.getInt("totalScore");
                 d.won = p.getBoolean("won");
+                d.killCount = p.getInt("killCount");
+                d.lastFindTime = p.getLong("lastFindTime");
                 d.discoveredStructures.addAll(readStringSet(p, "structures"));
                 d.discoveredBiomes.addAll(readStringSet(p, "biomes"));
                 state.playerData.put(uuid, d);
