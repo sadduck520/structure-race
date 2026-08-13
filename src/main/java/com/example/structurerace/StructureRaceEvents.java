@@ -13,14 +13,22 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.mob.Monster;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.tag.StructureTags;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.scoreboard.Scoreboard;
 import net.minecraft.scoreboard.ScoreboardCriterion;
 import net.minecraft.scoreboard.ScoreboardObjective;
@@ -33,45 +41,76 @@ import net.minecraft.structure.StructureStart;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.GameMode;
+import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.gen.structure.Structure;
 
 /**
- * 结构竞速 (Structure Race) V2.2 - 事件监听类
+ * 结构竞速 (Structure Race) V2.5 - 事件监听类
  *
- * <p>新增组队系统：
+ * <p>核心规则（V2.5 起）：
  * <ul>
- *   <li>支持队伍创建/解散，管理员可把玩家移入/移出队伍。</li>
- *   <li>队伍级去重：队员共同发现的结构/群系只计分一次，队伍总分共享。</li>
- *   <li>组队与单人模式共存：无队伍者仍按个人计分，互不冲突。</li>
- *   <li>Tab 玩家列表按队伍显示不同颜色（基于原版计分板 Team）。</li>
- *   <li>队伍级胜利判定（积分制/限时制均支持）。</li>
+ *   <li><b>观众模式</b>：只有加入队伍的玩家能参与竞速；无队伍玩家视为观众（旁观者），
+ *       所有计分与机制对观众无效。</li>
+ *   <li>计分板显示「队名+玩家名」+ 队伍总分，团队作为整体看待。</li>
+ *   <li>平衡机制：里程计分、击杀计分、队伍召回、维度奖励、落后补偿、迷路指引。</li>
  * </ul>
  */
 public final class StructureRaceEvents {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("StructureRace");
 
+    // ==================== 常量 ====================
+
     private static final long COOLDOWN_TICKS = StructureRaceConfig.SCORE_COOLDOWN_SECONDS * 20L;
     private static final long BIOME_COOLDOWN_TICKS = StructureRaceConfig.BIOME_CHECK_COOLDOWN_TICKS;
 
+    /** 机制1：每累计 500 格水平移动加 1 分 */
+    private static final double DISTANCE_PER_POINT = 500.0;
+    /** 单次采样位移超过该值视为传送，不累计距离 */
+    private static final double DISTANCE_TELEPORT_THRESHOLD = 50.0;
+
+    /** 机制2：每击杀 10 只敌对怪物加 1 分 */
+    private static final int KILLS_PER_POINT = 10;
+    /** 机制2：单玩家单局击杀计分上限（200 只 = 20 分） */
+    private static final int MAX_KILLS = 200;
+
+    /** 机制3：队伍召回冷却（5 分钟） */
+    private static final long RECALL_COOLDOWN_TICKS = 300L * 20L;
+    /** 机制3：召回消耗队伍分 */
+    private static final int RECALL_COST = 10;
+
+    /** 机制4：维度奖励分值 */
+    private static final int NETHER_BONUS = 10;
+    private static final int END_BONUS = 20;
+
+    /** 机制5：落后补偿判定分差 */
+    private static final int COMPENSATION_GAP = 30;
+
+    /** 机制6：连续 5 分钟无任何发现触发指引 */
+    private static final long FIND_TIMEOUT_TICKS = 300L * 20L;
+    /** 机制6：指引全局冷却（10 分钟） */
+    private static final long GUIDE_GLOBAL_COOLDOWN_TICKS = 600L * 20L;
+    private static final int GUIDE_RADIUS = 512;
+
+    // ==================== 内存状态 ====================
+
     private static final Map<UUID, PlayerState> PLAYER_STATES = new HashMap<>();
     private static final Map<UUID, String> PLAYER_SCOREBOARD_KEYS = new HashMap<>();
-
-    /** 玩家 UUID → 队伍 ID（内存缓存，与 PersistentState 的 teams 同步） */
     private static final Map<UUID, String> playerTeamMap = new HashMap<>();
 
-    /** 队伍颜色循环表（用于 Tab 列表玩家名变色） */
     private static final Formatting[] TEAM_COLORS = {
             Formatting.RED, Formatting.BLUE, Formatting.GREEN, Formatting.YELLOW,
             Formatting.LIGHT_PURPLE, Formatting.AQUA, Formatting.GOLD, Formatting.DARK_GREEN
     };
 
-    // ==================== 比赛状态内存缓存 ====================
     private static boolean cachedMatchActive = false;
     private static String cachedWinCondition = "score";
     private static int cachedWinScore = StructureRaceConfig.WIN_SCORE;
     private static long lastAnnouncedSeconds = -1;
+    private static long lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
+    private static int tickCounter;
 
     private StructureRaceEvents() {}
 
@@ -89,11 +128,18 @@ public final class StructureRaceEvents {
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
                 onPlayerSpawn(newPlayer));
 
+        // 机制4：维度进入奖励（轮询检测维度变化）
+
+        // 机制2：击杀敌对怪物
+        ServerLivingEntityEvents.AFTER_DEATH.register(StructureRaceEvents::onEntityDeath);
+
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             PLAYER_STATES.clear();
             PLAYER_SCOREBOARD_KEYS.clear();
             playerTeamMap.clear();
             lastAnnouncedSeconds = -1;
+            lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
+            tickCounter = 0;
             LOGGER.info("[StructureRace] 新世界服务器启动，内存竞速状态已重置。");
         });
 
@@ -109,18 +155,38 @@ public final class StructureRaceEvents {
             }
         });
 
-        LOGGER.info("[StructureRace] V2.2 事件监听器已注册完成。");
+        LOGGER.info("[StructureRace] V2.5 事件监听器已注册完成。");
     }
 
     // ==================== Tick 回调 ====================
 
     private static void onServerTick(MinecraftServer server) {
+        tickCounter++;
         tickMatchTimer(server);
 
+        // 机制5：落后队伍速度补偿（每 100 tick）
+        if (tickCounter % 100 == 0) {
+            applySpeedCompensation(server);
+        }
+
+        ServerWorld overworld = server.getOverworld();
+        StructureRaceState saveState = StructureRaceState.get(overworld);
+
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            if (player.age % StructureRaceConfig.CHECK_INTERVAL_TICKS != 0) continue;
-            checkPlayerStructure(player);
-            checkPlayerBiome(player);
+            if (player.isSpectator()) continue;
+            if (!cachedMatchActive) continue;
+            // 观众（无队伍）不参与任何机制
+            if (getPlayerTeam(saveState, player.getUuid()) == null) continue;
+
+            if (player.age % 20 == 0) {
+                trackDistance(player, saveState); // 机制1
+            }
+            if (player.age % StructureRaceConfig.CHECK_INTERVAL_TICKS == 0) {
+                checkDimensionChange(player, saveState); // 机制4
+                checkPlayerStructure(player, saveState);
+                checkPlayerBiome(player, saveState);
+                maybeGiveDirectionHint(player, saveState); // 机制6
+            }
         }
     }
 
@@ -164,21 +230,10 @@ public final class StructureRaceEvents {
 
         String winnerName = null;
         int best = -1;
-
-        // 比较队伍
         for (StructureRaceState.TeamData team : state.getAllTeams().values()) {
             if (team.totalScore > best) {
                 best = team.totalScore;
                 winnerName = "队伍 " + team.teamId;
-            }
-        }
-        // 比较单人玩家（不在队伍中的）
-        for (Map.Entry<UUID, PlayerState> e : PLAYER_STATES.entrySet()) {
-            if (playerTeamMap.containsKey(e.getKey())) continue;
-            PlayerState ps = e.getValue();
-            if (ps.totalScore > best) {
-                best = ps.totalScore;
-                winnerName = ps.playerName;
             }
         }
 
@@ -216,7 +271,6 @@ public final class StructureRaceEvents {
         cachedWinCondition = saveState.winCondition;
         cachedWinScore = saveState.winScore;
 
-        // 恢复个人进度
         StructureRaceState.PlayerPersistentData pd = saveState.getExistingPlayerData(player.getUuid());
         if (pd != null) {
             state.discoveredStructures.addAll(pd.discoveredStructures);
@@ -224,16 +278,15 @@ public final class StructureRaceEvents {
             state.totalScore = pd.totalScore;
             state.won = pd.won;
         }
+        state.lastFindTime = overworld.getTime();
 
-        // 比赛正在进行中的中途加入者：如果未入队则设为旁观者模式
+        // 比赛进行中：无队伍玩家 = 观众（旁观者）
         StructureRaceState.TeamData team = saveState.getTeamByMember(player.getUuid());
         if (cachedMatchActive && team == null) {
-            player.changeGameMode(net.minecraft.world.GameMode.SPECTATOR);
-            LOGGER.info("[StructureRace] 玩家 {} 中途加入但无队伍，已设为旁观者。",
-                    player.getEntityName());
+            player.changeGameMode(GameMode.SPECTATOR);
+            LOGGER.info("[StructureRace] 玩家 {} 未入队（观众），已设为旁观者。", player.getEntityName());
         }
 
-        // 恢复队伍归属并同步 Tab 颜色
         if (team != null) {
             playerTeamMap.put(player.getUuid(), team.teamId);
             addPlayerToScoreboardTeam(player, team);
@@ -243,14 +296,12 @@ public final class StructureRaceEvents {
         ScoreboardObjective objective = getOrCreateObjective(scoreboard);
         String key = computeScoreboardKey(player, scoreboard, objective);
         PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
-        // 有队伍显示队总分，无队伍显示个人分
         int displayScore = team != null ? team.totalScore : state.totalScore;
         scoreboard.getPlayerScore(key, objective).setScore(displayScore);
 
-        LOGGER.info("[StructureRace] 玩家 {} 加入：{} 分, 队伍={}, won={}",
-                player.getName().getString(),
-                team != null ? "队伍[" + team.teamId + "] " + team.totalScore : String.valueOf(state.totalScore),
-                team != null ? team.teamId : "无", state.won);
+        LOGGER.info("[StructureRace] 玩家 {} 加入：队伍={}, 显示分={}, won={}",
+                player.getName().getString(), team != null ? team.teamId : "观众",
+                displayScore, state.won);
     }
 
     private static void onPlayerDisconnect(ServerPlayerEntity player) {
@@ -263,24 +314,228 @@ public final class StructureRaceEvents {
         }
     }
 
-    // ==================== 结构检测与计分 ====================
+    // ==================== 机制1：跑图里程计分 ====================
 
-    private static void checkPlayerStructure(ServerPlayerEntity player) {
-        if (player.isSpectator()) return;
+    private static void trackDistance(ServerPlayerEntity player, StructureRaceState saveState) {
         PlayerState state = PLAYER_STATES.get(player.getUuid());
         if (state == null || state.won) return;
+
+        BlockPos pos = player.getBlockPos();
+        if (state.lastDistancePos != null) {
+            double dx = pos.getX() - state.lastDistancePos.getX();
+            double dz = pos.getZ() - state.lastDistancePos.getZ();
+            double dist = Math.sqrt(dx * dx + dz * dz);
+            // 单次大位移视为传送（含下界折跃、掉虚空重生），不累计
+            if (dist < DISTANCE_TELEPORT_THRESHOLD) {
+                state.distanceAccumulator += dist;
+                if (state.distanceAccumulator >= DISTANCE_PER_POINT) {
+                    StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
+                    if (team != null) {
+                        team.totalScore += 1;
+                        saveState.markDirty();
+                        state.lastFindTime = player.getServerWorld().getTime();
+                        broadcastScore(player, team, "长途跋涉", 1, team.totalScore);
+                        updateTeamScoreboard(player.server, team);
+                        checkWinCondition(player, state, team, saveState);
+                    }
+                    state.distanceAccumulator = 0;
+                }
+            }
+        }
+        state.lastDistancePos = pos;
+    }
+
+    // ==================== 机制2：击杀怪物计分 ====================
+
+    private static void onEntityDeath(LivingEntity entity, DamageSource source) {
         if (!cachedMatchActive) return;
+        if (entity.getServer() == null) return;
+        if (!(entity instanceof Monster)) return;
+
+        ServerPlayerEntity killer = null;
+        if (source.getAttacker() instanceof ServerPlayerEntity p) {
+            killer = p;
+        }
+        if (killer == null) return;
+
+        PlayerState state = PLAYER_STATES.get(killer.getUuid());
+        if (state == null || state.won) return;
+
+        StructureRaceState saveState = StructureRaceState.get(killer.getServer().getOverworld());
+        StructureRaceState.TeamData team = getPlayerTeam(saveState, killer.getUuid());
+        if (team == null) return; // 观众不参与
+
+        if (state.killCount >= MAX_KILLS) return;
+        state.killCount++;
+
+        if (state.killCount % KILLS_PER_POINT == 0) {
+            team.totalScore += 1;
+            saveState.markDirty();
+            state.lastFindTime = killer.getServerWorld().getTime();
+            broadcastScore(killer, team, "消灭怪物浪潮", 1, team.totalScore);
+            updateTeamScoreboard(killer.server, team);
+            checkWinCondition(killer, state, team, saveState);
+        }
+    }
+
+    // ==================== 机制4：维度进入奖励（轮询检测） ====================
+
+    private static void checkDimensionChange(ServerPlayerEntity player, StructureRaceState saveState) {
+        PlayerState state = PLAYER_STATES.get(player.getUuid());
+        if (state == null || state.won) return;
+
+        RegistryKey<World> current = player.getServerWorld().getRegistryKey();
+        String cur = current.getValue().getPath(); // "overworld" / "the_nether" / "the_end"
+        String last = state.lastDimension;
+        state.lastDimension = cur;
+        if (last == null || last.equals(cur)) return; // 首次加入或未变化
+
+        StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
+        if (team == null) return;
+
+        int score = 0;
+        String dimName = null;
+        if ("the_nether".equals(cur) && !team.hasEnteredNether) {
+            team.hasEnteredNether = true;
+            score = NETHER_BONUS;
+            dimName = "下界";
+        } else if ("the_end".equals(cur) && !team.hasEnteredEnd) {
+            team.hasEnteredEnd = true;
+            score = END_BONUS;
+            dimName = "末地";
+        }
+        if (score == 0) return;
+
+        team.totalScore += score;
+        saveState.markDirty();
+        state.lastFindTime = player.getServerWorld().getTime();
+        broadcastScore(player, team, "踏入" + dimName, score, team.totalScore);
+        updateTeamScoreboard(player.server, team);
+        checkWinCondition(player, state, team, saveState);
+    }
+
+    // ==================== 机制5：落后队伍速度补偿 ====================
+
+    private static void applySpeedCompensation(MinecraftServer server) {
+        if (!cachedMatchActive) return;
+        StructureRaceState saveState = StructureRaceState.get(server.getOverworld());
+
+        int maxScore = 0;
+        for (StructureRaceState.TeamData t : saveState.getAllTeams().values()) {
+            if (t.totalScore > maxScore) maxScore = t.totalScore;
+        }
+
+        for (StructureRaceState.TeamData team : saveState.getAllTeams().values()) {
+            boolean compensate = team.totalScore <= maxScore - COMPENSATION_GAP;
+            for (UUID uuid : team.members) {
+                ServerPlayerEntity p = server.getPlayerManager().getPlayer(uuid);
+                if (p == null || p.isSpectator() || !p.isAlive()) continue;
+                PlayerState ps = PLAYER_STATES.get(uuid);
+                if (ps == null || ps.won) continue;
+                if (!compensate) continue;
+
+                StatusEffectInstance speed = p.getStatusEffect(StatusEffects.SPEED);
+                // 已有速度II（或更高）：等效果结束，下轮再补速度I
+                if (speed != null && speed.getAmplifier() >= 1) continue;
+                // 无速度效果，或只有速度I：给予/刷新速度I（200 tick）
+                p.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 0, false, true, true));
+            }
+        }
+    }
+
+    // ==================== 机制6：迷路指引 ====================
+
+    private static void maybeGiveDirectionHint(ServerPlayerEntity player, StructureRaceState saveState) {
+        PlayerState state = PLAYER_STATES.get(player.getUuid());
+        if (state == null || state.won) return;
+
+        long gameTime = player.getServerWorld().getTime();
+        if (gameTime - state.lastFindTime < FIND_TIMEOUT_TICKS) return;
+        if (gameTime - lastGlobalGuideTime < GUIDE_GLOBAL_COOLDOWN_TICKS) return;
+        lastGlobalGuideTime = gameTime;
+        state.lastFindTime = gameTime; // 防止连续触发刷屏
+
+        ServerWorld world = player.getServerWorld();
+        BlockPos pos = player.getBlockPos();
+        RegistryKey<World> dim = world.getRegistryKey();
+
+        try {
+            if (dim == World.NETHER) {
+                // 下界：无堡垒 tag 可查询，给出通用提示（避免不安全的定位）
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                        + "§e在险恶的下界中，尝试沿岩壁寻找阴暗的砖石建筑，或向高处探索。"), false);
+            } else if (dim == World.END) {
+                // 末地：无单结构 tag 可查询，给出通用提示
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                        + "§e在末地外岛继续前行，寻找浮空的紫珀建筑；注意脚下虚空。"), false);
+            } else {
+                // 主世界：先找村庄，再找破损传送门
+                BlockPos village = world.locateStructure(StructureTags.VILLAGE, pos, GUIDE_RADIUS, false);
+                if (village != null) {
+                    sendDirectionHint(player, pos, village, "村庄", null);
+                    return;
+                }
+                BlockPos portal = world.locateStructure(StructureTags.RUINED_PORTAL, pos, GUIDE_RADIUS, false);
+                if (portal != null) {
+                    sendDirectionHint(player, pos, portal, "破损传送门", null);
+                    return;
+                }
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                        + "§e附近 512 格内未找到村庄或传送门。尝试向高处眺望，或沿河流/道路前行寻找文明痕迹。"), false);
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[StructureRace] 指引查询失败: {}", e.getMessage());
+        }
+    }
+
+    private static void sendDirectionHint(ServerPlayerEntity player, BlockPos from, BlockPos to,
+                                           String name, String fallback) {
+        if (to == null) {
+            if (fallback != null) {
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + fallback), false);
+            }
+            return;
+        }
+        double dx = to.getX() - from.getX();
+        double dz = to.getZ() - from.getZ();
+        double dist = Math.round(Math.sqrt(dx * dx + dz * dz));
+        player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                + "最近的 §e" + name + "§r 在你 §6" + getDirection(dx, dz)
+                + "§r 方向，约 §6" + (int) dist + "§r 格！"), false);
+    }
+
+    private static String getDirection(double dx, double dz) {
+        int[][] dirs = {{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
+        String[] names = {"东", "东南", "南", "西南", "西", "西北", "北", "东北"};
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len < 0.5) return "脚下";
+        int best = 0;
+        double bestDot = -999;
+        for (int i = 0; i < 8; i++) {
+            double dot = (dx * dirs[i][0] + dz * dirs[i][1]) / len;
+            if (dot > bestDot) {
+                bestDot = dot;
+                best = i;
+            }
+        }
+        return names[best];
+    }
+
+    // ==================== 结构检测与计分 ====================
+
+    private static void checkPlayerStructure(ServerPlayerEntity player, StructureRaceState saveState) {
+        PlayerState state = PLAYER_STATES.get(player.getUuid());
+        if (state == null || state.won) return;
+        if (player.isSpectator()) return;
+
+        StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
+        if (team == null) return; // 观众不参与
 
         long gameTime = player.getServerWorld().getTime();
         if (gameTime - state.lastScoreGameTime < COOLDOWN_TICKS) return;
 
         BlockPos pos = player.getBlockPos();
         ServerWorld world = player.getServerWorld();
-        StructureRaceState saveState = StructureRaceState.get(player.getServer().getOverworld());
-        StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
-
-        // 去重集合：有队伍用队伍集合，无队伍用个人集合
-        Set<String> dedupSet = team != null ? team.discoveredStructures : state.discoveredStructures;
 
         Registry<Structure> registry = world.getRegistryManager().get(RegistryKeys.STRUCTURE);
         for (RegistryKey<Structure> structKey : StructureRaceConfig.getTargetStructures()) {
@@ -302,28 +557,20 @@ public final class StructureRaceEvents {
 
             // 全局独占去重：已被任意队伍发现的实例，其他队伍不再加分
             if (saveState.globallyDiscoveredStructures.contains(uniqueId)) return;
-            if (dedupSet.contains(uniqueId)) return;
+            if (team.discoveredStructures.contains(uniqueId)) return;
 
             // ===== 新结构！加分 =====
-            dedupSet.add(uniqueId);
+            team.discoveredStructures.add(uniqueId);
             saveState.globallyDiscoveredStructures.add(uniqueId);
-            if (team != null) {
-                team.totalScore += scoreValue;
-            } else {
-                state.totalScore += scoreValue;
-            }
+            team.totalScore += scoreValue;
             state.lastScoreGameTime = gameTime;
+            state.lastFindTime = gameTime;
             saveState.markDirty();
 
-            int displayScore = team != null ? team.totalScore : state.totalScore;
-            if (team != null) {
-                updateTeamScoreboard(player.server, team);
-            } else {
-                updateScoreboard(player, displayScore);
-            }
+            updateTeamScoreboard(player.server, team);
 
             String structName = structKey.getValue().getPath().replace('_', ' ');
-            broadcastDiscover(player, team, structName, scoreValue, displayScore);
+            broadcastScore(player, team, "发现" + structName, scoreValue, team.totalScore);
 
             checkWinCondition(player, state, team, saveState);
             return;
@@ -332,11 +579,13 @@ public final class StructureRaceEvents {
 
     // ==================== 群系检测与计分 ====================
 
-    private static void checkPlayerBiome(ServerPlayerEntity player) {
-        if (player.isSpectator()) return;
+    private static void checkPlayerBiome(ServerPlayerEntity player, StructureRaceState saveState) {
         PlayerState state = PLAYER_STATES.get(player.getUuid());
         if (state == null || state.won) return;
-        if (!cachedMatchActive) return;
+        if (player.isSpectator()) return;
+
+        StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
+        if (team == null) return; // 观众不参与
 
         long gameTime = player.getServerWorld().getTime();
         if (gameTime - state.lastBiomeCheckTime < BIOME_COOLDOWN_TICKS) return;
@@ -344,11 +593,8 @@ public final class StructureRaceEvents {
 
         BlockPos pos = player.getBlockPos();
         ServerWorld world = player.getServerWorld();
-        StructureRaceState saveState = StructureRaceState.get(player.getServer().getOverworld());
-        StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
-        Set<String> dedupSet = team != null ? team.discoveredBiomes : state.discoveredBiomes;
-
         RegistryEntry<Biome> biomeEntry = world.getBiome(pos);
+
         Optional<RegistryKey<Biome>> biomeKeyOpt = biomeEntry.getKey();
         if (biomeKeyOpt.isEmpty()) return;
         RegistryKey<Biome> biomeKey = biomeKeyOpt.get();
@@ -357,26 +603,18 @@ public final class StructureRaceEvents {
         if (scoreValue == null) return;
 
         String biomeId = biomeKey.getValue().toString();
-        if (dedupSet.contains(biomeId)) return;
+        if (team.discoveredBiomes.contains(biomeId)) return;
 
         // ===== 新群系！加分 =====
-        dedupSet.add(biomeId);
-        if (team != null) {
-            team.totalScore += scoreValue;
-        } else {
-            state.totalScore += scoreValue;
-        }
+        team.discoveredBiomes.add(biomeId);
+        team.totalScore += scoreValue;
+        state.lastFindTime = gameTime;
         saveState.markDirty();
 
-        int displayScore = team != null ? team.totalScore : state.totalScore;
-        if (team != null) {
-            updateTeamScoreboard(player.server, team);
-        } else {
-            updateScoreboard(player, displayScore);
-        }
+        updateTeamScoreboard(player.server, team);
 
         String biomeName = biomeKey.getValue().getPath().replace('_', ' ');
-        broadcastDiscover(player, team, "群系 " + biomeName, scoreValue, displayScore);
+        broadcastScore(player, team, "探索" + biomeName, scoreValue, team.totalScore);
 
         checkWinCondition(player, state, team, saveState);
     }
@@ -385,28 +623,17 @@ public final class StructureRaceEvents {
 
     private static void checkWinCondition(ServerPlayerEntity player, PlayerState state,
                                           StructureRaceState.TeamData team, StructureRaceState saveState) {
-        if ("timer".equals(cachedWinCondition)) return; // 限时制由倒计时结算
-
-        if (team != null) {
-            if (team.totalScore >= cachedWinScore) {
-                // 队伍获胜
-                saveState.matchActive = false;
-                saveState.markDirty();
-                cachedMatchActive = false;
-                player.server.getPlayerManager().broadcast(Text.literal(
-                        StructureRaceConfig.BROADCAST_PREFIX
-                                + "§e🎉 §6队伍 " + team.teamId + " §r率先达到 §6" + team.totalScore
-                                + "§r 分，获得胜利！ §e🎉"), false);
-                LOGGER.info("[StructureRace] 队伍 {} 获胜！{} 分", team.teamId, team.totalScore);
-            }
-        } else if (state.totalScore >= cachedWinScore) {
-            state.won = true;
+        if ("timer".equals(cachedWinCondition)) return;
+        if (team == null) return;
+        if (team.totalScore >= cachedWinScore) {
             saveState.matchActive = false;
-            saveState.getPlayerData(player.getUuid()).won = true;
             saveState.markDirty();
             cachedMatchActive = false;
-            broadcastWin(player, state.totalScore);
-            LOGGER.info("[StructureRace] 玩家 {} 获得胜利！{} 分", player.getName().getString(), state.totalScore);
+            player.server.getPlayerManager().broadcast(Text.literal(
+                    StructureRaceConfig.BROADCAST_PREFIX
+                            + "§e🎉 §6队伍 " + team.teamId + " §r率先达到 §6" + team.totalScore
+                            + "§r 分，获得胜利！ §e🎉"), false);
+            LOGGER.info("[StructureRace] 队伍 {} 获胜！{} 分", team.teamId, team.totalScore);
         }
     }
 
@@ -417,13 +644,12 @@ public final class StructureRaceEvents {
         if (teamId == null) return null;
         StructureRaceState.TeamData team = state.getTeam(teamId);
         if (team == null) {
-            playerTeamMap.remove(uuid); // 队伍已解散，清理缓存
+            playerTeamMap.remove(uuid);
             return null;
         }
         return team;
     }
 
-    /** 将在线玩家加入原版计分板 Team，实现 Tab 列表名字变色 */
     private static void addPlayerToScoreboardTeam(ServerPlayerEntity player, StructureRaceState.TeamData team) {
         try {
             Scoreboard scoreboard = player.getScoreboard();
@@ -434,7 +660,6 @@ public final class StructureRaceEvents {
         }
     }
 
-    /** 将在线玩家从原版计分板 Team 移除（恢复默认颜色） */
     private static void removePlayerFromScoreboardTeam(ServerPlayerEntity player, StructureRaceState.TeamData team) {
         try {
             Scoreboard scoreboard = player.getScoreboard();
@@ -456,7 +681,6 @@ public final class StructureRaceEvents {
         return sbTeam;
     }
 
-    /** 队伍积分变化时，刷新所有在线队员的计分板显示 */
     private static void updateTeamScoreboard(MinecraftServer server, StructureRaceState.TeamData team) {
         for (UUID uuid : team.members) {
             ServerPlayerEntity p = server.getPlayerManager().getPlayer(uuid);
@@ -466,9 +690,20 @@ public final class StructureRaceEvents {
         }
     }
 
+    /** 刷新某玩家的计分板条目名（加入/离开队伍后队名变化时调用） */
+    private static void refreshScoreboardKey(ServerPlayerEntity player) {
+        Scoreboard scoreboard = player.getScoreboard();
+        ScoreboardObjective objective = getOrCreateObjective(scoreboard);
+        String oldKey = PLAYER_SCOREBOARD_KEYS.remove(player.getUuid());
+        if (oldKey != null) {
+            scoreboard.resetPlayerScore(oldKey, objective);
+        }
+        String newKey = computeScoreboardKey(player, scoreboard, objective);
+        PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), newKey);
+    }
+
     // ==================== 比赛控制（供 /race 命令调用） ====================
 
-    /** 开始新一局：清空所有分数与队伍已发现集合，重置队伍积分。 */
     public static void startMatch(MinecraftServer server) {
         ServerWorld overworld = server.getOverworld();
         StructureRaceState state = StructureRaceState.get(overworld);
@@ -479,6 +714,9 @@ public final class StructureRaceEvents {
             t.totalScore = 0;
             t.discoveredStructures.clear();
             t.discoveredBiomes.clear();
+            t.lastRecallTime = 0;
+            t.hasEnteredNether = false;
+            t.hasEnteredEnd = false;
         }
         state.globallyDiscoveredStructures.clear();
         state.markDirty();
@@ -486,21 +724,21 @@ public final class StructureRaceEvents {
         PLAYER_STATES.clear();
         PLAYER_SCOREBOARD_KEYS.clear();
         lastAnnouncedSeconds = -1;
+        lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
         cachedMatchActive = true;
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
 
-        // 为所有在线玩家重建竞速状态（模拟 JOIN 初始化，否则清空后无法再计分）
+        // 为所有在线玩家重建竞速状态（模拟 JOIN 初始化）
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             onPlayerSpawn(player);
         }
 
-        // 未加入任何队伍的玩家设为旁观者模式（比赛开始后不能以自由人身份参与）
-        StructureRaceState raceState = StructureRaceState.get(server.getOverworld());
+        // 未加入任何队伍的玩家设为旁观者模式（观众）
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            if (raceState.getTeamByMember(player.getUuid()) == null) {
-                player.changeGameMode(net.minecraft.world.GameMode.SPECTATOR);
-                LOGGER.info("[StructureRace] 玩家 {} 未入队，已设为旁观者模式。", player.getEntityName());
+            if (state.getTeamByMember(player.getUuid()) == null) {
+                player.changeGameMode(GameMode.SPECTATOR);
+                LOGGER.info("[StructureRace] 玩家 {} 未入队（观众），已设为旁观者模式。", player.getEntityName());
             }
         }
 
@@ -521,10 +759,6 @@ public final class StructureRaceEvents {
                 StructureRaceConfig.BROADCAST_PREFIX + "§c比赛已停止，暂停计分。§r"), false);
     }
 
-    /**
-     * 恢复已暂停的比赛（不清空分数，不重置倒计时）。
-     * 限时制的剩余时间从上次开始的时间继续计算，已过去的时间不扣回。
-     */
     public static void resumeMatch(MinecraftServer server) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         state.matchActive = true;
@@ -542,10 +776,14 @@ public final class StructureRaceEvents {
             t.totalScore = 0;
             t.discoveredStructures.clear();
             t.discoveredBiomes.clear();
+            t.lastRecallTime = 0;
+            t.hasEnteredNether = false;
+            t.hasEnteredEnd = false;
         }
         state.globallyDiscoveredStructures.clear();
         state.matchActive = false;
         state.markDirty();
+
         // 先把所有在线玩家的计分板分数归零（必须在清空 PLAYER_SCOREBOARD_KEYS 之前）
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             String key = PLAYER_SCOREBOARD_KEYS.get(player.getUuid());
@@ -575,7 +813,6 @@ public final class StructureRaceEvents {
         }
     }
 
-    /** 热修改积分制获胜分数（在比赛开始前设置） */
     public static void setWinScore(MinecraftServer server, int score) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         state.winScore = Math.max(1, score);
@@ -583,7 +820,6 @@ public final class StructureRaceEvents {
         cachedWinScore = state.winScore;
     }
 
-    /** 热修改限时制时长（秒），并同步当前比赛的剩余时长（若比赛未开始则从下次 start 生效） */
     public static void setMatchDuration(MinecraftServer server, int seconds) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         state.matchDurationTicks = Math.max(1, seconds) * 20L;
@@ -593,7 +829,6 @@ public final class StructureRaceEvents {
 
     // ==================== 队伍管理（供 /race team 命令调用） ====================
 
-    /** 创建队伍；已存在则返回 false */
     public static boolean createTeam(MinecraftServer server, String teamId) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         if (state.getTeam(teamId) != null) return false;
@@ -602,7 +837,6 @@ public final class StructureRaceEvents {
         return true;
     }
 
-    /** 解散队伍：所有队员退出原版计分板 Team 并清理缓存 */
     public static boolean disbandTeam(MinecraftServer server, String teamId) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         StructureRaceState.TeamData team = state.getTeam(teamId);
@@ -612,6 +846,11 @@ public final class StructureRaceEvents {
             ServerPlayerEntity p = server.getPlayerManager().getPlayer(uuid);
             if (p != null) {
                 removePlayerFromScoreboardTeam(p, team);
+                // 解散队伍时若比赛进行中，成员变为观众
+                if (cachedMatchActive) {
+                    p.changeGameMode(GameMode.SPECTATOR);
+                    refreshScoreboardKey(p);
+                }
             }
             playerTeamMap.remove(uuid);
         }
@@ -629,7 +868,6 @@ public final class StructureRaceEvents {
         StructureRaceState.TeamData newTeam = state.getTeam(teamId);
         if (newTeam == null) return 2;
 
-        // 若玩家已有队伍，先移出
         StructureRaceState.TeamData oldTeam = state.getTeamByMember(player.getUuid());
         if (oldTeam != null && oldTeam != newTeam) {
             oldTeam.members.remove(player.getUuid());
@@ -641,15 +879,16 @@ public final class StructureRaceEvents {
         addPlayerToScoreboardTeam(player, newTeam);
         state.markDirty();
 
-        // 将旁观者玩家传送回世界出生点并切回生存模式
+        // 观众（旁观者）加入队伍：传送回出生点并切回生存
         if (player.isSpectator()) {
             BlockPos spawnPos = server.getOverworld().getSpawnPos();
             player.teleport(server.getOverworld(), spawnPos.getX() + 0.5, spawnPos.getY(),
                     spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
         }
-        player.changeGameMode(net.minecraft.world.GameMode.SURVIVAL);
+        player.changeGameMode(GameMode.SURVIVAL);
 
-        // 刷新计分板显示为该队总分
+        // 刷新计分板条目名（加上队名）并显示队总分
+        refreshScoreboardKey(player);
         updateScoreboard(player, newTeam.totalScore);
         LOGGER.info("[StructureRace] 玩家 {} 加入队伍 {}", playerName, teamId);
         return 0;
@@ -669,14 +908,75 @@ public final class StructureRaceEvents {
         playerTeamMap.remove(player.getUuid());
         state.markDirty();
 
-        // 刷新为该玩家个人分
+        // 比赛进行中：离开队伍 = 观众
+        if (cachedMatchActive) {
+            player.changeGameMode(GameMode.SPECTATOR);
+        }
+        refreshScoreboardKey(player);
         PlayerState ps = PLAYER_STATES.get(player.getUuid());
         updateScoreboard(player, ps != null ? ps.totalScore : 0);
         LOGGER.info("[StructureRace] 玩家 {} 已离开队伍 {}", playerName, team.teamId);
         return 0;
     }
 
-    /** 返回所有队伍及成员的格式化列表 */
+    /** 机制3：队伍召回。返回 0=成功，其他值见错误码。 */
+    public static int recallPlayer(MinecraftServer server, ServerPlayerEntity actor, String targetName) {
+        ServerPlayerEntity target = (targetName == null || targetName.isEmpty())
+                ? actor : server.getPlayerManager().getPlayer(targetName);
+        if (target == null) return 1; // 目标不在线
+
+        StructureRaceState state = StructureRaceState.get(server.getOverworld());
+        StructureRaceState.TeamData actorTeam = state.getTeamByMember(actor.getUuid());
+        StructureRaceState.TeamData targetTeam = state.getTeamByMember(target.getUuid());
+        if (targetTeam == null) return 2; // 被召回者无队伍
+
+        // 非同队召回需 OP 权限
+        if (actor != target && (actorTeam == null || !actorTeam.teamId.equals(targetTeam.teamId))
+                && !actor.hasPermissionLevel(2)) {
+            return 3;
+        }
+
+        long now = server.getOverworld().getTime();
+        if (now - targetTeam.lastRecallTime < RECALL_COOLDOWN_TICKS) return 4; // 冷却中
+        if (targetTeam.totalScore < RECALL_COST) return 5; // 积分不足
+
+        // 寻找最近的存活队友（排除被召回者自己、旁观者、虚空）
+        ServerPlayerEntity nearest = null;
+        double bestDist = Double.MAX_VALUE;
+        for (UUID uuid : targetTeam.members) {
+            if (uuid.equals(target.getUuid())) continue;
+            ServerPlayerEntity mate = server.getPlayerManager().getPlayer(uuid);
+            if (mate == null || mate.isSpectator() || !mate.isAlive()) continue;
+            if (mate.getY() < -64) continue;
+            double d = mate.squaredDistanceTo(target);
+            if (d < bestDist) {
+                bestDist = d;
+                nearest = mate;
+            }
+        }
+        if (nearest == null) return 6; // 无其他存活队友（含单人队伍）
+
+        // 执行召回
+        targetTeam.totalScore -= RECALL_COST;
+        targetTeam.lastRecallTime = now;
+        state.markDirty();
+
+        target.teleport(nearest.getServerWorld(), nearest.getX(), nearest.getY(), nearest.getZ(),
+                nearest.getYaw(), nearest.getPitch());
+        target.addStatusEffect(new StatusEffectInstance(StatusEffects.RESISTANCE, 100, 2, false, true, true));
+        target.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 1, false, true, true));
+
+        updateTeamScoreboard(server, targetTeam);
+        server.getPlayerManager().broadcast(Text.literal(
+                StructureRaceConfig.BROADCAST_PREFIX
+                        + "§c[" + targetTeam.teamId + "]§r §a" + target.getEntityName()
+                        + " §r被召回至队友身边（队伍 -§6" + RECALL_COST + "§r 分）"), false);
+        LOGGER.info("[StructureRace] 玩家 {} 被召回（队伍 {}）", target.getEntityName(), targetTeam.teamId);
+        return 0;
+    }
+
+    // ==================== 队伍信息查询 ====================
+
     public static List<String> listTeams(MinecraftServer server) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         List<String> lines = new ArrayList<>();
@@ -697,18 +997,6 @@ public final class StructureRaceEvents {
         return lines;
     }
 
-    /** 返回某玩家所属队伍；无队伍返回 null */
-    public static String getPlayerTeamName(MinecraftServer server, String playerName) {
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerName);
-        if (player == null) return null;
-        StructureRaceState state = StructureRaceState.get(server.getOverworld());
-        StructureRaceState.TeamData team = state.getTeamByMember(player.getUuid());
-        return team != null ? team.teamId : null;
-    }
-
-    /**
-     * 获取某队伍的已发现结构/群系详情（中文名、水平排列）。
-     */
     public static List<String> getTeamInfo(MinecraftServer server, String teamId) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         StructureRaceState.TeamData team = state.getTeam(teamId);
@@ -744,7 +1032,6 @@ public final class StructureRaceEvents {
         return lines;
     }
 
-    /** 查询某结构是否已被指定队伍发现（支持中文名或英文注册名） */
     public static boolean hasTeamDiscoveredStructure(MinecraftServer server, String teamId, String structName) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         StructureRaceState.TeamData team = state.getTeam(teamId);
@@ -801,7 +1088,9 @@ public final class StructureRaceEvents {
         List<String> lines = new ArrayList<>();
         int rank = 1;
         for (Map.Entry<UUID, PlayerState> e : list) {
-            lines.add("§e" + rank + ". §r" + e.getValue().playerName + ": §6" + e.getValue().totalScore + "§r 分");
+            String teamName = playerTeamMap.get(e.getKey());
+            String name = teamName != null ? "[" + teamName + "]" + e.getValue().playerName : e.getValue().playerName;
+            lines.add("§e" + rank + ". §r" + name + ": §6" + e.getValue().totalScore + "§r 分");
             rank++;
         }
         return lines;
@@ -837,9 +1126,13 @@ public final class StructureRaceEvents {
         return objective;
     }
 
+    /** 计分板条目名：有队伍显示「[队名]玩家名」，观众显示玩家名 */
     private static String computeScoreboardKey(ServerPlayerEntity player, Scoreboard scoreboard,
                                                 ScoreboardObjective objective) {
-        String rawName = player.getEntityName();
+        String teamName = playerTeamMap.get(player.getUuid());
+        String rawName = teamName != null
+                ? "[" + teamName + "]" + player.getEntityName()
+                : player.getEntityName();
         String truncated = truncatePlayerName(rawName);
         Set<String> used = new HashSet<>();
         for (Map.Entry<UUID, String> e : PLAYER_SCOREBOARD_KEYS.entrySet()) {
@@ -861,15 +1154,13 @@ public final class StructureRaceEvents {
 
     // ==================== 广播 ====================
 
-    private static void broadcastDiscover(ServerPlayerEntity player, StructureRaceState.TeamData team,
-                                           String what, int earned, int total) {
-        String who = team != null
-                ? "§c[" + team.teamId + "]§r " + player.getName().getString()
-                : player.getName().getString();
+    private static void broadcastScore(ServerPlayerEntity player, StructureRaceState.TeamData team,
+                                        String reason, int earned, int total) {
         Text message = Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX
-                        + "§a" + who + " §r发现了 §e" + what + "§r！"
-                        + " (+§6" + earned + "§r 分, 累计 §6" + total + "§r 分)");
+                        + "§c[" + team.teamId + "]§r §a" + player.getName().getString()
+                        + " §r获得 §6+" + earned + "§r 分（" + reason
+                        + "），队伍累计 §6" + total + "§r 分");
         player.server.getPlayerManager().broadcast(message, false);
     }
 
@@ -890,6 +1181,11 @@ public final class StructureRaceEvents {
         private int totalScore;
         private long lastScoreGameTime;
         private long lastBiomeCheckTime;
+        private long lastFindTime; // 机制6：上次任何加分的时间
         private boolean won;
+        private BlockPos lastDistancePos; // 机制1
+        private double distanceAccumulator; // 机制1
+        private int killCount; // 机制2
+        private String lastDimension; // 机制4：上次所在维度
     }
 }

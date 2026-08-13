@@ -91,6 +91,15 @@ public final class StructureRaceState extends PersistentState {
 
         /** 队伍总分 */
         public int totalScore;
+
+        /** 上次使用队伍召回的时间（tick），5 分钟冷却 */
+        public long lastRecallTime;
+
+        /** 队伍是否已首次进入下界（维度探索奖励） */
+        public boolean hasEnteredNether;
+
+        /** 队伍是否已首次进入末地（维度探索奖励） */
+        public boolean hasEnteredEnd;
     }
 
     // ==================== 工厂 ====================
@@ -184,6 +193,9 @@ public final class StructureRaceState extends PersistentState {
             tn.putString("id", t.teamId);
             tn.putInt("color", t.colorIndex);
             tn.putInt("totalScore", t.totalScore);
+            tn.putLong("lastRecallTime", t.lastRecallTime);
+            tn.putBoolean("hasEnteredNether", t.hasEnteredNether);
+            tn.putBoolean("hasEnteredEnd", t.hasEnteredEnd);
 
             NbtList members = new NbtList();
             for (UUID u : t.members) {
@@ -244,6 +256,9 @@ public final class StructureRaceState extends PersistentState {
                 t.teamId = tn.getString("id");
                 t.colorIndex = tn.getInt("color");
                 t.totalScore = tn.getInt("totalScore");
+                t.lastRecallTime = tn.getLong("lastRecallTime");
+                t.hasEnteredNether = tn.getBoolean("hasEnteredNether");
+                t.hasEnteredEnd = tn.getBoolean("hasEnteredEnd");
                 NbtElement me = tn.get("members");
                 if (me instanceof NbtList members) {
                     for (int j = 0; j < members.size(); j++) {

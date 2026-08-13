@@ -7,6 +7,7 @@ import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.List;
  *   <li><b>{@code /race status}</b> —— 查看当前模式、状态与剩余时间</li>
  *   <li><b>{@code /race time}</b> —— 查看限时制剩余时间</li>
  *   <li><b>{@code /race top}</b> —— 显示当前积分排行榜</li>
+ *   <li><b>{@code /race recall [玩家]}</b> —— 队伍召回（需同队，消耗 10 分，5 分钟冷却）</li>
  *   <li><b>{@code /race team create &lt;名称&gt;}</b> —— 创建队伍</li>
  *   <li><b>{@code /race team disband &lt;名称&gt;}</b> —— 解散队伍</li>
  *   <li><b>{@code /race team add &lt;玩家&gt; &lt;队伍&gt;}</b> —— 将玩家移入队伍（自动离开原队伍）</li>
@@ -41,6 +43,14 @@ public final class StructureRaceCommand {
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            // /race recall 无需 OP（普通队员可用）
+            dispatcher.register(CommandManager.literal("race")
+                    .then(CommandManager.literal("recall")
+                            .executes(ctx -> recall(ctx, ""))
+                            .then(CommandManager.argument("player", StringArgumentType.word())
+                                    .executes(ctx -> recall(ctx, StringArgumentType.getString(ctx, "player"))))));
+
+            // /race 管理员命令组
             dispatcher.register(CommandManager.literal("race")
                     .requires(src -> src.hasPermissionLevel(2)) // 管理员权限
                     .then(CommandManager.literal("start").executes(ctx -> start(ctx)))
@@ -86,6 +96,39 @@ public final class StructureRaceCommand {
     }
 
     // ==================== 比赛控制 ====================
+
+    private static int recall(CommandContext<ServerCommandSource> ctx, String target) {
+        ServerPlayerEntity actor = ctx.getSource().getPlayer();
+        if (actor == null) {
+            ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
+            return 0;
+        }
+        int result = StructureRaceEvents.recallPlayer(ctx.getSource().getServer(), actor, target);
+        switch (result) {
+            case 1:
+                ctx.getSource().sendError(Text.literal("目标玩家不在线。"));
+                return 0;
+            case 2:
+                ctx.getSource().sendError(Text.literal("被召回玩家不在任何队伍中。"));
+                return 0;
+            case 3:
+                ctx.getSource().sendError(Text.literal("只能召回同队玩家（或由管理员执行）。"));
+                return 0;
+            case 4:
+                ctx.getSource().sendError(Text.literal("队伍召回冷却中（5 分钟）。"));
+                return 0;
+            case 5:
+                ctx.getSource().sendError(Text.literal("队伍积分不足，召回需要消耗 10 分。"));
+                return 0;
+            case 6:
+                ctx.getSource().sendError(Text.literal("队伍中没有其他存活队友（单人队伍无法召回）。"));
+                return 0;
+            default:
+                ctx.getSource().sendFeedback(() -> Text.literal(
+                        StructureRaceConfig.BROADCAST_PREFIX + "召回已执行。"), false);
+                return 1;
+        }
+    }
 
     private static int start(CommandContext<ServerCommandSource> ctx) {
         StructureRaceEvents.startMatch(ctx.getSource().getServer());
