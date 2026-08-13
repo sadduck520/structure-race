@@ -17,12 +17,15 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.Monster;
+import net.minecraft.network.message.MessageType;
+import net.minecraft.network.message.SignedMessage;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
@@ -127,6 +130,9 @@ public final class StructureRaceEvents {
 
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
                 onPlayerSpawn(newPlayer));
+
+        // 聊天消息：比赛进行中普通消息仅队友可见，`!` 前缀为全局消息
+        ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(StructureRaceEvents::handleChatMessage);
 
         // 机制4：维度进入奖励（轮询检测维度变化）
 
@@ -297,16 +303,20 @@ public final class StructureRaceEvents {
             addPlayerToScoreboardTeam(player, team);
         }
 
-        Scoreboard scoreboard = player.getScoreboard();
-        ScoreboardObjective objective = getOrCreateObjective(scoreboard);
-        String key = computeScoreboardKey(player, scoreboard, objective);
-        PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
-        int displayScore = team != null ? team.totalScore : state.totalScore;
-        scoreboard.getPlayerScore(key, objective).setScore(displayScore);
+        if (team != null) {
+            Scoreboard scoreboard = player.getScoreboard();
+            ScoreboardObjective objective = getOrCreateObjective(scoreboard);
+            String key = computeScoreboardKey(player, scoreboard, objective);
+            PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
+            scoreboard.getPlayerScore(key, objective).setScore(team.totalScore);
+        } else {
+            // 观众（无队伍）：不在计分板显示
+            hidePlayerScoreboard(player);
+        }
 
         LOGGER.info("[StructureRace] 玩家 {} 加入：队伍={}, 显示分={}, won={}",
                 player.getName().getString(), team != null ? team.teamId : "观众",
-                displayScore, state.won);
+                team != null ? team.totalScore : 0, state.won);
     }
 
     private static void onPlayerDisconnect(ServerPlayerEntity player) {
@@ -319,6 +329,55 @@ public final class StructureRaceEvents {
         }
         // 移除内存状态：重进时从持久化数据干净重建，保证断线重连与服务器重启行为一致
         PLAYER_STATES.remove(player.getUuid());
+        playerTeamMap.remove(player.getUuid());
+    }
+
+    // ==================== 聊天消息系统 ====================
+
+    /**
+     * 聊天消息拦截（仅比赛进行中生效）：
+     * <ul>
+     *   <li>队员普通聊天 = 队聊：仅同队玩家（含自己）可见。</li>
+     *   <li>{@code !消息} = 全局消息：所有在线玩家（含观众）可见。</li>
+     *   <li>观众（无队伍）普通聊天 = 全局：观众无队聊对象，按全局处理便于交流。</li>
+     * </ul>
+     * 返回 false 表示取消默认广播，由本方法自行分发。
+     */
+    private static boolean handleChatMessage(SignedMessage message, ServerPlayerEntity sender,
+                                             MessageType.Parameters boundChatType) {
+        // 比赛未开始/已结束：保持默认全局聊天
+        if (!cachedMatchActive) return true;
+
+        String content = message.getSignedContent();
+        boolean global = content.startsWith("!");
+        String display = (global ? content.substring(1) : content).trim();
+        if (display.isEmpty()) return false;
+
+        StructureRaceState state = StructureRaceState.get(sender.getServer().getOverworld());
+        StructureRaceState.TeamData team = state.getTeamByMember(sender.getUuid());
+
+        if (global) {
+            // 全局消息：所有人可见
+            Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                    + "§f[全局] §r§a" + sender.getEntityName() + "§7: §r" + display);
+            sender.getServer().getPlayerManager().broadcast(msg, false);
+        } else if (team != null) {
+            // 队聊：仅同队玩家可见
+            Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                    + "§7[队聊·" + team.teamId + "] §r§a" + sender.getEntityName() + "§7: §r" + display);
+            for (ServerPlayerEntity p : sender.getServer().getPlayerManager().getPlayerList()) {
+                StructureRaceState.TeamData pTeam = state.getTeamByMember(p.getUuid());
+                if (pTeam != null && pTeam.teamId.equals(team.teamId)) {
+                    p.sendMessage(msg, false);
+                }
+            }
+        } else {
+            // 观众（无队伍）：按全局发送
+            Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
+                    + "§7[观众] §r§a" + sender.getEntityName() + "§7: §r" + display);
+            sender.getServer().getPlayerManager().broadcast(msg, false);
+        }
+        return false; // 取消默认广播，使用自定义分发
     }
 
     // ==================== 机制1：跑图里程计分 ====================
@@ -705,7 +764,7 @@ public final class StructureRaceEvents {
         }
     }
 
-    /** 刷新某玩家的计分板条目名（加入/离开队伍后队名变化时调用） */
+    /** 刷新某玩家的计分板条目名（加入/离开队伍后队名变化时调用）；观众（无队伍）不显示计分板 */
     private static void refreshScoreboardKey(ServerPlayerEntity player) {
         Scoreboard scoreboard = player.getScoreboard();
         ScoreboardObjective objective = getOrCreateObjective(scoreboard);
@@ -713,8 +772,21 @@ public final class StructureRaceEvents {
         if (oldKey != null) {
             scoreboard.resetPlayerScore(oldKey, objective);
         }
+        // 观众（无队伍）：移除后不再重建
+        if (playerTeamMap.get(player.getUuid()) == null) return;
         String newKey = computeScoreboardKey(player, scoreboard, objective);
         PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), newKey);
+    }
+
+    /** 隐藏某玩家的计分板条目（观众无队伍时调用） */
+    private static void hidePlayerScoreboard(ServerPlayerEntity player) {
+        Scoreboard scoreboard = player.getScoreboard();
+        ScoreboardObjective objective = scoreboard.getNullableObjective(
+                StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
+        String key = PLAYER_SCOREBOARD_KEYS.remove(player.getUuid());
+        if (objective != null && key != null) {
+            scoreboard.resetPlayerScore(key, objective);
+        }
     }
 
     // ==================== 比赛控制（供 /race 命令调用） ====================
@@ -864,10 +936,13 @@ public final class StructureRaceEvents {
                 // 解散队伍时若比赛进行中，成员变为观众
                 if (cachedMatchActive) {
                     p.changeGameMode(GameMode.SPECTATOR);
-                    refreshScoreboardKey(p);
                 }
             }
             playerTeamMap.remove(uuid);
+            // 离开队伍后（观众）：不显示计分板
+            if (p != null) {
+                refreshScoreboardKey(p);
+            }
         }
         state.removeTeam(teamId);
         LOGGER.info("[StructureRace] 解散队伍: {}", teamId);
@@ -1124,6 +1199,8 @@ public final class StructureRaceEvents {
         ScoreboardObjective objective = getOrCreateObjective(scoreboard);
         String key = PLAYER_SCOREBOARD_KEYS.get(player.getUuid());
         if (key == null) {
+            // 观众（无队伍）：不在计分板显示
+            if (playerTeamMap.get(player.getUuid()) == null) return;
             key = computeScoreboardKey(player, scoreboard, objective);
             PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
         }
@@ -1147,7 +1224,7 @@ public final class StructureRaceEvents {
         return objective;
     }
 
-    /** 计分板条目名：有队伍显示「[队名]玩家名」，观众显示玩家名 */
+    /** 计分板条目名：有队伍显示「[队名]玩家名」；观众（无队伍）不显示计分板，不调用本方法 */
     private static String computeScoreboardKey(ServerPlayerEntity player, Scoreboard scoreboard,
                                                 ScoreboardObjective objective) {
         String teamName = playerTeamMap.get(player.getUuid());
