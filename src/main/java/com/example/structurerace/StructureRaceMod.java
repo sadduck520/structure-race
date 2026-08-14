@@ -37,6 +37,9 @@ public class StructureRaceMod implements ModInitializer {
         // 注册管理员指令（/race start | stop | reset | mode | status | time | top）
         StructureRaceCommand.register();
 
+        // 注册网络接收器（客户端按键请求打开规则/积分/进度书）
+        StructureRaceNetworking.registerServer();
+
         LOGGER.info("[StructureRace] 结构竞速模组初始化完成！");
     }
 }

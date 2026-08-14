@@ -587,7 +587,47 @@ public final class StructureRaceEvents {
         }
         nbt.put("pages", pages);
         book.setNbt(nbt);
+        openBookScreen(player, book);
+    }
+
+    /**
+     * 可靠地在客户端打开一本 WrittenBook：
+     * <ol>
+     *   <li>把书临时放入玩家主手槽位，并立即同步背包（客户端本地主手 = 书）；</li>
+     *   <li>调用原版 useBook 发送打开书包（客户端按序处理，先收到槽位更新再收到开书包，检查主手为书后打开屏幕）；</li>
+     *   <li>恢复原物品并再次同步背包，不影响已打开的书页。</li>
+     * </ol>
+     */
+    public static void openBookScreen(ServerPlayerEntity player, ItemStack book) {
+        if (player == null || book == null || book.isEmpty()) return;
+        PlayerInventory inv = player.getInventory();
+        int slot = inv.selectedSlot;
+        ItemStack old = inv.getStack(slot);
+        inv.setStack(slot, book);
+        player.currentScreenHandler.sendContentUpdates();
         player.useBook(book, Hand.MAIN_HAND);
+        inv.setStack(slot, old);
+        player.currentScreenHandler.sendContentUpdates();
+    }
+
+    /** 打开规则书（玩法指南），任何阶段都可查看 */
+    public static void openRuleBookScreen(ServerPlayerEntity player) {
+        openBookScreen(player, createRuleBook());
+    }
+
+    /**
+     * 处理客户端按键发来的开书请求（网络接收器在服务端主线程回调）。
+     * 对应 StructureRaceNetworking 的 TYPE_* 常量。
+     */
+    public static void handleOpenBookRequest(ServerPlayerEntity player, String type) {
+        if (player == null || player.networkHandler == null) return;
+        if (StructureRaceNetworking.TYPE_RULES.equals(type)) {
+            openRuleBookScreen(player);
+        } else if (StructureRaceNetworking.TYPE_POINT.equals(type)) {
+            openPointBook(player);
+        } else if (StructureRaceNetworking.TYPE_PROGRESS.equals(type)) {
+            openProgressBook(player);
+        }
     }
 
     /** 打开「积分映射书」：结构分值 + 群系分值 + 其他积分规则 */
