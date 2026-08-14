@@ -273,11 +273,15 @@ public final class StructureRaceEvents {
                     ensureLobbyGear(player);
                 }
                 if (player.age % 20 == 0) {
-                    // 不在大厅（且非 OP）：拉回大厅；在大厅：防止掉下平台（虚空）
-                    if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) {
-                        if (!player.hasPermissionLevel(2)) teleportToLobby(player);
-                    } else if (player.getY() < LOBBY_PLATFORM_Y) {
-                        teleportToLobby(player);
+                    // 不在大厅：拉回大厅（等待阶段不允许离开，OP 也不例外）；在大厅：防止掉下平台（虚空）
+                    try {
+                        if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) {
+                            teleportToLobby(player);
+                        } else if (player.getY() < LOBBY_PLATFORM_Y) {
+                            teleportToLobby(player);
+                        }
+                    } catch (Exception e) {
+                        LOGGER.warn("[StructureRace] 拉回玩家 {} 到大厅失败: {}", player.getEntityName(), e.getMessage());
                     }
                 }
                 continue;
@@ -411,11 +415,12 @@ public final class StructureRaceEvents {
         if (!cachedMatchActive) {
             player.changeGameMode(GameMode.ADVENTURE);
             ensureLobbyGear(player);
-            // 延迟一 tick 传送到大厅：避免 JOIN/重生瞬间跨维度传送引发实体追踪异常
-            final ServerPlayerEntity p = player;
-            player.getServer().execute(() -> {
-                if (!p.isRemoved()) teleportToLobbyIfNotThere(p);
-            });
+            // 直接传送到大厅（无论是否 OP，单机玩家默认 OP 也须进大厅）；异常由 onServerTick 兜底拉回
+            try {
+                teleportToLobbyIfNotThere(player);
+            } catch (Exception e) {
+                LOGGER.warn("[StructureRace] 传送玩家 {} 到大厅失败: {}", player.getEntityName(), e.getMessage());
+            }
         }
 
         // 比赛进行中：无队伍玩家 = 主世界旁观者（观众）
@@ -566,6 +571,135 @@ public final class StructureRaceEvents {
         stack.setCustomName(Text.literal("§6结构竞速·玩法指南"));
         return stack;
     }
+    // ==================== 信息书（积分映射 / 竞速进度） ====================
+
+    /** 给玩家打开一本只读书（WrittenBook） */
+    public static void openInfoBook(ServerPlayerEntity player, String title, List<String> pageLines) {
+        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
+        NbtCompound nbt = new NbtCompound();
+        nbt.putString("title", title);
+        nbt.putString("author", "structure_race");
+        nbt.putInt("generation", 0);
+        nbt.putBoolean("resolved", true);
+        NbtList pages = new NbtList();
+        for (String page : pageLines) {
+            pages.add(NbtString.of(Text.Serializer.toJson(Text.literal(page))));
+        }
+        nbt.put("pages", pages);
+        book.setNbt(nbt);
+        player.useBook(book, Hand.MAIN_HAND);
+    }
+
+    /** 打开「积分映射书」：结构分值 + 群系分值 + 其他积分规则 */
+    public static void openPointBook(ServerPlayerEntity player) {
+        List<String> pages = new ArrayList<>();
+        // 结构分值
+        StringBuilder sb = new StringBuilder("§l§n结构积分映射§r\n");
+        int count = 0;
+        for (RegistryKey<Structure> key : StructureRaceConfig.STRUCTURE_SCORES.keySet()) {
+            int score = StructureRaceConfig.STRUCTURE_SCORES.get(key);
+            String name = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(
+                    key.getValue().getPath(), key.getValue().getPath());
+            if (count > 0 && count % 12 == 0) {
+                pages.add(sb.toString());
+                sb = new StringBuilder("§l§n结构积分映射(续)§r\n");
+            }
+            sb.append(name).append(' ').append(score).append('\n');
+            count++;
+        }
+        pages.add(sb.toString());
+        // 群系分值
+        sb = new StringBuilder("§l§n群系积分映射§r\n");
+        count = 0;
+        for (RegistryKey<Biome> key : StructureRaceConfig.BIOME_SCORES.keySet()) {
+            int score = StructureRaceConfig.BIOME_SCORES.get(key);
+            String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(
+                    key.getValue().toString(), key.getValue().getPath());
+            if (count > 0 && count % 12 == 0) {
+                pages.add(sb.toString());
+                sb = new StringBuilder("§l§n群系积分映射(续)§r\n");
+            }
+            sb.append(name).append(' ').append(score).append('\n');
+            count++;
+        }
+        pages.add(sb.toString());
+        // 其他积分规则
+        sb = new StringBuilder("§l§n其他积分规则§r\n");
+        sb.append("里程：每500格+1分\n坐船行驶不计\n\n");
+        sb.append("击杀：每10只敌对怪物\n+1分（含远程击杀）\n\n");
+        sb.append("维度：首次进入下界+10\n首次进入末地+20\n（每队各一次）\n\n");
+        sb.append("府邸：有探险家地图+50\n无地图+30");
+        pages.add(sb.toString());
+        openInfoBook(player, "积分映射", pages);
+    }
+
+    /** 打开「进度书」：总分、已找到结构及数量、已探索/未找到的可加分群系 */
+    public static void openProgressBook(ServerPlayerEntity player) {
+        StructureRaceState state = StructureRaceState.get(player.getServer().getOverworld());
+        StructureRaceState.TeamData team = state.getTeamByMember(player.getUuid());
+        List<String> pages = new ArrayList<>();
+        if (team == null) {
+            pages.add("§l§n竞速进度§r\n\n你尚未加入任何队伍。\n加入队伍后才能查看\n本队的探索进度。\n\n可用 §1/race join <颜色>§r\n或右键指南针组队。");
+            openInfoBook(player, "竞速进度", pages);
+            return;
+        }
+        String teamZh = StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(team.teamId, team.teamId);
+        // 已找到结构及数量
+        Map<String, Integer> structCount = new HashMap<>();
+        for (String uniqueId : team.discoveredStructures) {
+            structCount.merge(extractRegistryName(uniqueId), 1, Integer::sum);
+        }
+        StringBuilder sb = new StringBuilder("§l§n" + teamZh + " 探索进度§r\n\n");
+        sb.append("总分：§l").append(team.totalScore).append("§r\n\n");
+        sb.append("§l【已发现结构】§r\n");
+        if (structCount.isEmpty()) {
+            sb.append("（暂无）\n");
+        } else {
+            int c = 0;
+            for (Map.Entry<String, Integer> e : structCount.entrySet()) {
+                String name = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(e.getKey(), e.getKey());
+                sb.append(name).append(" x").append(e.getValue()).append('\n');
+                if (++c % 12 == 0) {
+                    pages.add(sb.toString());
+                    sb = new StringBuilder("§l【已发现结构(续)】§r\n");
+                }
+            }
+        }
+        sb.append("\n§l【已探索群系】§r\n");
+        if (team.discoveredBiomes.isEmpty()) {
+            sb.append("（暂无）\n");
+        } else {
+            int c = 0;
+            for (String id : team.discoveredBiomes) {
+                String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(id, id);
+                sb.append(name).append('\n');
+                if (++c % 14 == 0) {
+                    pages.add(sb.toString());
+                    sb = new StringBuilder("§l【已探索群系(续)】§r\n");
+                }
+            }
+        }
+        pages.add(sb.toString());
+        // 未找到的可加分群系
+        sb = new StringBuilder("§l§n未找到的可加分群系§r\n");
+        int c = 0;
+        for (RegistryKey<Biome> key : StructureRaceConfig.BIOME_SCORES.keySet()) {
+            String id = key.getValue().toString();
+            if (team.discoveredBiomes.contains(id)) continue;
+            String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(id, key.getValue().getPath());
+            int score = StructureRaceConfig.BIOME_SCORES.get(key);
+            sb.append(name).append(' ').append(score).append('\n');
+            if (++c % 14 == 0) {
+                pages.add(sb.toString());
+                sb = new StringBuilder("§l§n未找到群系(续)§r\n");
+            }
+        }
+        if (c == 0) sb.append("（全部已探索！）");
+        pages.add(sb.toString());
+        openInfoBook(player, "竞速进度", pages);
+    }
+
+
 
     // ==================== 结算（title + 排名 + 延迟传送 + 烟花） ====================
 
@@ -1154,9 +1288,12 @@ public final class StructureRaceEvents {
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
 
-        // 所有玩家从大厅传送到主世界出生点；有队伍 = 生存参赛，无队伍 = 旁观者观战
+        // 所有玩家从大厅传送到主世界出生点；清空背包；有队伍 = 生存参赛，无队伍 = 旁观者观战
         BlockPos spawnPos = overworld.getSpawnPos();
+        // 预生成主世界出生点所在区块（以及周边一圈），避免跨维度传送后客户端看不到任何地形/实体
+        overworld.getChunk(spawnPos.getX() >> 4, spawnPos.getZ() >> 4, net.minecraft.world.chunk.ChunkStatus.FULL, true);
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            player.getInventory().clear(); // 比赛开始清空背包，防止携带大厅物品/作弊物品
             player.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
                     spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
             // 重生点改为主世界（比赛期间死亡不回到大厅）

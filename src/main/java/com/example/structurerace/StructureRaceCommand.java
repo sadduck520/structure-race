@@ -50,6 +50,10 @@ public final class StructureRaceCommand {
                                     .executes(ctx -> join(ctx))))
                     .then(CommandManager.literal("leave")
                             .executes(ctx -> leave(ctx)))
+                    .then(CommandManager.literal("point")
+                            .executes(ctx -> point(ctx)))
+                    .then(CommandManager.literal("progress")
+                            .executes(ctx -> progress(ctx)))
                     .then(CommandManager.literal("recall")
                             .executes(ctx -> recall(ctx, ""))
                             .then(CommandManager.argument("player", StringArgumentType.word())
@@ -120,6 +124,26 @@ public final class StructureRaceCommand {
         }
     }
 
+    private static int point(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
+            return 0;
+        }
+        StructureRaceEvents.openPointBook(player);
+        return 1;
+    }
+
+    private static int progress(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
+            return 0;
+        }
+        StructureRaceEvents.openProgressBook(player);
+        return 1;
+    }
+
     private static int leave(CommandContext<ServerCommandSource> ctx) {
         ServerPlayerEntity player = ctx.getSource().getPlayer();
         if (player == null) {
@@ -140,8 +164,8 @@ public final class StructureRaceCommand {
                 return 1;
         }
     }
-
     private static int recall(CommandContext<ServerCommandSource> ctx, String target) {
+
         ServerPlayerEntity actor = ctx.getSource().getPlayer();
         if (actor == null) {
             ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
