@@ -197,7 +197,7 @@ public final class StructureRaceConfig {
         map.put(structKey("trail_ruins"), 12);
 
         // === 主世界 - 水下 ===
-        map.put(structKey("shipwreck"), 4);
+        map.put(structKey("shipwreck"), 3);
         map.put(structKey("shipwreck_beached"), 4);
         map.put(structKey("ocean_ruin_cold"), 3);
         map.put(structKey("ocean_ruin_warm"), 3);
