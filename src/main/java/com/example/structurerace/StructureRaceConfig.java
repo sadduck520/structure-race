@@ -157,44 +157,43 @@ public final class StructureRaceConfig {
         return m;
     }
 
-    /** 群系注册名 → 中文名 */
-    public static final java.util.Map<String, String> BIOME_NAMES = createBiomeNames();
+    /** 群系注册名 → 中文名（key 含 minecraft: 前缀，与查询用的 biomeId 格式一致） */
+    public static final Map<String, String> BIOME_NAMES = createBiomeNames();
 
-    private static java.util.Map<String, String> createBiomeNames() {
-        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
-        m.put("badlands", "恶地");
-        m.put("bamboo_jungle", "竹林");
-        m.put("cherry_grove", "樱花树林");
-        m.put("dark_forest", "黑森林");
-        m.put("deep_dark", "深暗之域");
-        m.put("desert", "沙漠");
-        m.put("dripstone_caves", "溶洞");
-        m.put("eroded_badlands", "风蚀恶地");
-        m.put("flower_forest", "繁花森林");
-        m.put("frozen_peaks", "冰封山峰");
-        m.put("grove", "雪林");
-        m.put("ice_spikes", "冰刺");
-        m.put("jagged_peaks", "尖峭山峰");
-        m.put("jungle", "丛林");
-        m.put("lush_caves", "繁茂洞穴");
-        m.put("mangrove_swamp", "红树林沼泽");
-        m.put("meadow", "草甸");
-        m.put("mushroom_fields", "蘑菇岛");
-        m.put("old_growth_birch_forest", "原始白桦林");
-        m.put("old_growth_pine_taiga", "原始松木针叶林");
-        m.put("old_growth_spruce_taiga", "原始云杉针叶林");
-        m.put("snowy_beach", "积雪沙滩");
-        m.put("snowy_plains", "积雪平原");
-        m.put("snowy_slopes", "雪坡");
-        m.put("snowy_taiga", "积雪针叶林");
-        m.put("sparse_jungle", "稀疏丛林");
-        m.put("stony_peaks", "石峰");
-        m.put("stony_shore", "石岸");
-        m.put("windswept_forest", "风袭森林");
-        m.put("windswept_gravelly_hills", "风袭沙砾丘陵");
-        m.put("windswept_hills", "风袭丘陵");
-        m.put("windswept_savanna", "风袭热带草原");
-        m.put("wooded_badlands", "繁茂恶地");
+    private static Map<String, String> createBiomeNames() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("minecraft:desert", "沙漠");
+        m.put("minecraft:jungle", "丛林");
+        m.put("minecraft:bamboo_jungle", "竹林");
+        m.put("minecraft:sparse_jungle", "稀疏丛林");
+        m.put("minecraft:badlands", "恶地");
+        m.put("minecraft:eroded_badlands", "被风蚀的恶地");
+        m.put("minecraft:wooded_badlands", "繁茂恶地");
+        m.put("minecraft:mushroom_fields", "蘑菇岛");
+        m.put("minecraft:ice_spikes", "冰刺之地");
+        m.put("minecraft:mangrove_swamp", "红树林沼泽");
+        m.put("minecraft:cherry_grove", "樱花树林");
+        m.put("minecraft:dark_forest", "黑森林");
+        m.put("minecraft:deep_dark", "深暗之域");
+        m.put("minecraft:dripstone_caves", "溶洞");
+        m.put("minecraft:lush_caves", "繁茂洞穴");
+        m.put("minecraft:frozen_peaks", "冰封山峰");
+        m.put("minecraft:jagged_peaks", "尖峭山峰");
+        m.put("minecraft:stony_peaks", "裸岩山峰");
+        m.put("minecraft:snowy_slopes", "雪坡");
+        m.put("minecraft:grove", "雪林");
+        m.put("minecraft:meadow", "草甸");
+        m.put("minecraft:flower_forest", "繁花森林");
+        m.put("minecraft:old_growth_birch_forest", "原始桦木森林");
+        m.put("minecraft:old_growth_pine_taiga", "原始松木针叶林");
+        m.put("minecraft:old_growth_spruce_taiga", "原始云杉针叶林");
+        m.put("minecraft:windswept_forest", "风袭森林");
+        m.put("minecraft:windswept_gravelly_hills", "风袭砾质丘陵");
+        m.put("minecraft:windswept_hills", "风袭丘陵");
+        m.put("minecraft:windswept_savanna", "风袭热带草原");
+        m.put("minecraft:snowy_plains", "积雪平原");
+        m.put("minecraft:snowy_taiga", "积雪针叶林");
+        m.put("minecraft:snowy_beach", "积雪沙滩");
         return m;
     }
 
@@ -318,5 +317,31 @@ public final class StructureRaceConfig {
     /** 所有目标结构（遍历检测用），每次从 STRUCTURE_SCORES.keySet() 生成 */
     public static Iterable<RegistryKey<Structure>> getTargetStructures() {
         return STRUCTURE_SCORES.keySet();
+    }
+
+    // ==================== 队伍选择器 / 规则书 ====================
+
+    /** 队伍选择器（指南针）的 NBT 标记键 */
+    public static final String TEAM_SELECTOR_TAG = "structure_race:team_selector";
+
+    /** 迷路指引：最近结构距离小于该值（格）时不做提示 */
+    public static final int HINT_MIN_DISTANCE = 100;
+
+    /** 迷路指引：无符合条件的结构时的重试间隔（tick，1 分钟） */
+    public static final int HINT_RETRY_TICKS = 1200;
+
+    /** 迷路指引：检索半径（格） */
+    public static final int HINT_SEARCH_RADIUS = 2048;
+
+    /** 规则书页面内容（玩法/规则/指令/积分关系） */
+    public static java.util.List<String> getRuleBookPages() {
+        java.util.List<String> pages = new java.util.ArrayList<>();
+        pages.add("§6§l结构竞速·玩法指南§r\n\n§f欢迎来到结构竞速！\n在本大厅中，用队伍选择器（指南针）右键，选择你要加入的队伍（8种颜色任选），或点击屏障退出队伍成为观众。");
+        pages.add("§6§l一、目标§r\n\n探索主世界、下界与末地，发现结构与稀有群系为队伍赚取积分。率先达到目标分数（积分制）或时间结束时积分最高（限时制）的队伍获胜！");
+        pages.add("§6§l二、计分方式§r\n\n§7结构：§r首次发现结构为队伍加分（不同结构分值不同）。\n§7群系：§r首次踏入稀有群系加分。\n§7里程：§r步行/飞行每500格+1分（坐船不计）。\n§7击杀：§r每击杀10只敌对怪物+1分。\n§7维度：§r首次进入下界+10、末地+20。\n§7府邸：§r带探险家地图发现林地府邸+50，无地图+30。");
+        pages.add("§6§l三、常用指令§r\n\n§e/race join <颜色>§r 加入队伍\n§e/race leave§r 离开队伍\n§e/race time§r 查看剩余时间\n§e/race top§r 查看队伍排名\n§e/race recall [玩家]§r 召回队友（消耗10分，5分钟冷却）\n§e/race status§r 查看比赛状态\n\n全局消息以 §e!§r 开头（例：!集合啦）。");
+        pages.add("§6§l四、特殊规则§r\n\n§7比赛进行中：§r不能换队，观众不可参赛。\n§7落后补偿：§r落后第一名20分的队伍获得速度加成。\n§7迷路指引：§r长时间无得分时自动提示最近结构方位。\n§7聊天：§r比赛中普通消息仅本队可见，§e!§r开头为全局消息。");
+        pages.add("§6§l五、结构分值一览§r\n\n§7远古城市25 · 堡垒遗迹18 · 林地府邸30/50 · 沙漠神殿10 · 末地城40 · 下界堡垒15 · 雪屋5 · 丛林神庙8 · 废弃矿井10 · 海底神殿10 · 掠夺者前哨站6 · 破损传送门3 · 沉船3 · 要塞30 · 女巫小屋5 · 古迹废墟12 · 村庄2-6§r\n（完整分值以游戏内为准）");
+        return pages;
     }
 }

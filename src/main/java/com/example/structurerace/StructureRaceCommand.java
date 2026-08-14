@@ -175,7 +175,11 @@ public final class StructureRaceCommand {
     }
 
     private static int start(CommandContext<ServerCommandSource> ctx) {
-        StructureRaceEvents.startMatch(ctx.getSource().getServer());
+        boolean ok = StructureRaceEvents.startMatch(ctx.getSource().getServer());
+        if (!ok) {
+            ctx.getSource().sendError(Text.literal("比赛已在进行中，无需重复开始！"));
+            return 0;
+        }
         ctx.getSource().sendFeedback(() -> Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX + "已开始新一局比赛！"), false);
         return 1;
@@ -252,10 +256,10 @@ public final class StructureRaceCommand {
     }
 
     private static int top(CommandContext<ServerCommandSource> ctx) {
-        List<String> lines = StructureRaceEvents.getLeaderboard();
+        List<String> lines = StructureRaceEvents.getLeaderboard(ctx.getSource().getServer());
         if (lines.isEmpty()) {
             ctx.getSource().sendFeedback(() -> Text.literal(
-                    StructureRaceConfig.BROADCAST_PREFIX + "当前排行榜为空。"), false);
+                    StructureRaceConfig.BROADCAST_PREFIX + "当前排行榜为空（没有有人的队伍）。"), false);
             return 1;
         }
         for (String line : lines) {
