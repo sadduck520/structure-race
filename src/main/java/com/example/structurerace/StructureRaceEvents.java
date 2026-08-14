@@ -249,19 +249,36 @@ public final class StructureRaceEvents {
             applySpeedCompensation(server);
         }
 
+        // 大厅维护：清除大厅维度的敌对实体（史莱姆/僵尸等），保持纯净虚空
+        if (tickCounter % 100 == 0) {
+            ServerWorld lobby = server.getWorld(LOBBY_KEY);
+            if (lobby != null) {
+                for (net.minecraft.entity.Entity e : lobby.iterateEntities()) {
+                    if (e instanceof Monster && e.isAlive()) {
+                        e.remove(net.minecraft.entity.Entity.RemovalReason.DISCARDED);
+                    }
+                }
+            }
+        }
+
         ServerWorld overworld = server.getOverworld();
         StructureRaceState saveState = StructureRaceState.get(overworld);
 
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             // 准备/结束阶段：玩家必须待在大厅（冒险模式 + 选队装备）；擅自离开大厅的强制送回（OP 豁免）
             if (!cachedMatchActive) {
+                // 结算延迟期间（宣布结果到回大厅的 10 秒）不拉回，让玩家在主世界看完 title
+                if (pendingEndTicks > 0) continue;
                 if (player.age % 40 == 0) {
                     ensureLobbyGear(player);
                 }
-                if (player.age % 20 == 0
-                        && player.getServerWorld().getRegistryKey() != LOBBY_KEY
-                        && !player.hasPermissionLevel(2)) {
-                    teleportToLobby(player);
+                if (player.age % 20 == 0) {
+                    // 不在大厅（且非 OP）：拉回大厅；在大厅：防止掉下平台（虚空）
+                    if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) {
+                        if (!player.hasPermissionLevel(2)) teleportToLobby(player);
+                    } else if (player.getY() < LOBBY_PLATFORM_Y) {
+                        teleportToLobby(player);
+                    }
                 }
                 continue;
             }
@@ -392,9 +409,13 @@ public final class StructureRaceEvents {
 
         // 准备/结束阶段：玩家出生在大厅玻璃平台，冒险模式，持有选队指南针与规则书
         if (!cachedMatchActive) {
-            teleportToLobbyIfNotThere(player);
             player.changeGameMode(GameMode.ADVENTURE);
             ensureLobbyGear(player);
+            // 延迟一 tick 传送到大厅：避免 JOIN/重生瞬间跨维度传送引发实体追踪异常
+            final ServerPlayerEntity p = player;
+            player.getServer().execute(() -> {
+                if (!p.isRemoved()) teleportToLobbyIfNotThere(p);
+            });
         }
 
         // 比赛进行中：无队伍玩家 = 主世界旁观者（观众）
@@ -446,9 +467,25 @@ public final class StructureRaceEvents {
                 }
             }
         }
+        // 平台边缘两格高的隐形屏障墙，防止玩家掉落
+        for (int i = -half; i < half; i++) {
+            placeBarrierWall(lobby, i, -half);
+            placeBarrierWall(lobby, i, half - 1);
+            placeBarrierWall(lobby, -half, i);
+            placeBarrierWall(lobby, half - 1, i);
+        }
         lobbyInitialized = true;
-        LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={})",
+        LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={}，含隐形屏障墙)",
                 LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_Y);
+    }
+
+    private static void placeBarrierWall(ServerWorld lobby, int x, int z) {
+        for (int dy = 0; dy <= 1; dy++) {
+            BlockPos pos = new BlockPos(x, LOBBY_PLATFORM_Y + 1 + dy, z);
+            if (lobby.getBlockState(pos).isAir()) {
+                lobby.setBlockState(pos, Blocks.BARRIER.getDefaultState());
+            }
+        }
     }
 
     /** 传送玩家到大厅玻璃平台中心 */
@@ -457,8 +494,8 @@ public final class StructureRaceEvents {
         if (lobby == null) return;
         ensureLobbyPlatform(player.getServer());
         player.teleport(lobby, 0.5, LOBBY_PLATFORM_Y + 2, 0.5, player.getYaw(), player.getPitch());
-        // 重生点改为大厅（准备/结束阶段死亡也回到大厅）
-        player.setSpawnPoint(LOBBY_KEY, new BlockPos(0, LOBBY_PLATFORM_Y, 0), 0.0f, true, false);
+        // 重生点改为大厅（脚在玻璃上方，避免重生时卡进玻璃方块）
+        player.setSpawnPoint(LOBBY_KEY, new BlockPos(0, LOBBY_PLATFORM_Y + 2, 0), 0.0f, true, false);
     }
 
     /** 玩家不在大厅时传送到大厅（准备/结束阶段入场用） */
@@ -1111,6 +1148,8 @@ public final class StructureRaceEvents {
         SCORE_LOG.clear(); // 新一局，清空上局得分记录
         lastAnnouncedSeconds = -1;
         lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
+        pendingEndTicks = -1;
+        pendingEndServer = null;
         cachedMatchActive = true;
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
@@ -1189,6 +1228,8 @@ public final class StructureRaceEvents {
         // 若比赛未经正常结算就被 reset，先输出本局得分记录
         dumpScoreLog(server);
         SCORE_LOG.clear(); // 兜底清空
+        pendingEndTicks = -1;
+        pendingEndServer = null;
         cachedMatchActive = false;
         // 队伍分数已归零，刷新队伍计分板（无成员队伍不显示）
         refreshAllTeamScoreboards(server);
