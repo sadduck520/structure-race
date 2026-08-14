@@ -19,6 +19,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.minecraft.block.Blocks;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.effect.StatusEffectInstance;
@@ -48,6 +49,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StructureStart;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
@@ -105,11 +107,20 @@ public final class StructureRaceEvents {
     // ==================== 内存状态 ====================
 
     private static final Map<UUID, PlayerState> PLAYER_STATES = new HashMap<>();
-    private static final Map<UUID, String> PLAYER_SCOREBOARD_KEYS = new HashMap<>();
     private static final Map<UUID, String> playerTeamMap = new HashMap<>();
 
     /** 本局得分明细（调试用）：每次加分记录，比赛结束后统一输出 */
     private static final List<ScoreLogEntry> SCORE_LOG = new ArrayList<>();
+
+    /** 队伍计分板条目（teamId → 计分板条目名，侧边栏每队一条） */
+    private static final Map<String, String> TEAM_SCOREBOARD_KEYS = new HashMap<>();
+
+    /** 大厅维度 key（独立维度：40x40 玻璃平台 + 虚空） */
+    public static final RegistryKey<World> LOBBY_KEY = RegistryKey.of(
+            RegistryKeys.WORLD, new Identifier("structure_race", "lobby"));
+    private static final int LOBBY_PLATFORM_SIZE = 40;
+    private static final int LOBBY_PLATFORM_Y = 64;
+    private static boolean lobbyInitialized = false;
 
     private static final Formatting[] TEAM_COLORS = {
             Formatting.RED, Formatting.BLUE, Formatting.GREEN, Formatting.YELLOW,
@@ -149,12 +160,18 @@ public final class StructureRaceEvents {
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             PLAYER_STATES.clear();
-            PLAYER_SCOREBOARD_KEYS.clear();
+            TEAM_SCOREBOARD_KEYS.clear();
             playerTeamMap.clear();
             lastAnnouncedSeconds = -1;
             lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
             tickCounter = 0;
+            lobbyInitialized = false;
             LOGGER.info("[StructureRace] 新世界服务器启动，内存竞速状态已重置。");
+        });
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            ensureLobbyPlatform(server);
+            refreshAllTeamScoreboards(server);
         });
 
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -276,6 +293,11 @@ public final class StructureRaceEvents {
                             + " 均以 §6" + best + "§r 分并列第一！"), false);
             LOGGER.info("[StructureRace] 限时赛结束，平局: {} ({}分)", teams, best);
         }
+
+        // 比赛结束：全体玩家回大厅（waiting 状态）
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            teleportToLobby(p);
+        }
     }
 
     private static String formatSeconds(long seconds) {
@@ -315,6 +337,11 @@ public final class StructureRaceEvents {
             state.lastFindTime = overworld.getTime();
         }
 
+        // 大厅：准备/结束后玩家出生在大厅玻璃平台（不进比赛世界）
+        if (!cachedMatchActive) {
+            teleportToLobbyIfNotThere(player);
+        }
+
         // 比赛进行中：无队伍玩家 = 观众（旁观者）
         StructureRaceState.TeamData team = saveState.getTeamByMember(player.getUuid());
         if (cachedMatchActive && team == null) {
@@ -327,16 +354,8 @@ public final class StructureRaceEvents {
             addPlayerToScoreboardTeam(player, team);
         }
 
-        if (team != null) {
-            Scoreboard scoreboard = player.getScoreboard();
-            ScoreboardObjective objective = getOrCreateObjective(scoreboard);
-            String key = computeScoreboardKey(player, scoreboard, objective);
-            PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
-            scoreboard.getPlayerScore(key, objective).setScore(team.totalScore);
-        } else {
-            // 观众（无队伍）：不在计分板显示
-            hidePlayerScoreboard(player);
-        }
+        // 计分板：侧边栏按队伍显示（每队一条，无人队伍不显示）
+        refreshAllTeamScoreboards(player.getServer());
 
         LOGGER.info("[StructureRace] 玩家 {} 加入：队伍={}, 显示分={}, won={}",
                 player.getName().getString(), team != null ? team.teamId : "观众",
@@ -344,16 +363,48 @@ public final class StructureRaceEvents {
     }
 
     private static void onPlayerDisconnect(ServerPlayerEntity player) {
-        Scoreboard scoreboard = player.getScoreboard();
-        ScoreboardObjective objective = scoreboard.getNullableObjective(
-                StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
-        String key = PLAYER_SCOREBOARD_KEYS.remove(player.getUuid());
-        if (objective != null && key != null) {
-            scoreboard.resetPlayerScore(key, objective);
-        }
         // 移除内存状态：重进时从持久化数据干净重建，保证断线重连与服务器重启行为一致
         PLAYER_STATES.remove(player.getUuid());
         playerTeamMap.remove(player.getUuid());
+        // 玩家退出可能导致队伍变空，刷新队伍计分板
+        refreshAllTeamScoreboards(player.getServer());
+    }
+    // ==================== 大厅（独立维度） ====================
+
+    /** 生成大厅 40x40 玻璃平台（仅一次；平台外为虚空） */
+    private static void ensureLobbyPlatform(MinecraftServer server) {
+        if (lobbyInitialized) return;
+        ServerWorld lobby = server.getWorld(LOBBY_KEY);
+        if (lobby == null) {
+            LOGGER.warn("[StructureRace] 大厅维度未加载，跳过平台生成。");
+            return;
+        }
+        int half = LOBBY_PLATFORM_SIZE / 2;
+        for (int x = -half; x < half; x++) {
+            for (int z = -half; z < half; z++) {
+                BlockPos pos = new BlockPos(x, LOBBY_PLATFORM_Y, z);
+                if (lobby.getBlockState(pos).isAir()) {
+                    lobby.setBlockState(pos, Blocks.GLASS.getDefaultState());
+                }
+            }
+        }
+        lobbyInitialized = true;
+        LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={})",
+                LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_Y);
+    }
+
+    /** 传送玩家到大厅玻璃平台中心 */
+    private static void teleportToLobby(ServerPlayerEntity player) {
+        ServerWorld lobby = player.getServer().getWorld(LOBBY_KEY);
+        if (lobby == null) return;
+        ensureLobbyPlatform(player.getServer());
+        player.teleport(lobby, 0.5, LOBBY_PLATFORM_Y + 2, 0.5, player.getYaw(), player.getPitch());
+    }
+
+    /** 玩家不在大厅时传送到大厅（准备/结束阶段入场用） */
+    private static void teleportToLobbyIfNotThere(ServerPlayerEntity player) {
+        if (player.getServerWorld().getRegistryKey() == LOBBY_KEY) return;
+        teleportToLobby(player);
     }
 
     // ==================== 聊天消息系统 ====================
@@ -431,7 +482,7 @@ public final class StructureRaceEvents {
                         saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
                         saveState.markDirty();
                         broadcastScore(player, team, "长途跋涉", 1, team.totalScore);
-                        updateTeamScoreboard(player.server, team);
+                        refreshTeamScoreboard(player.server, team);
                         checkWinCondition(player, state, team, saveState);
                     }
                     state.distanceAccumulator = 0;
@@ -472,7 +523,7 @@ public final class StructureRaceEvents {
             state.lastFindTime = pd.lastFindTime;
             saveState.markDirty();
             broadcastScore(killer, team, "消灭怪物浪潮", 1, team.totalScore);
-            updateTeamScoreboard(killer.server, team);
+            refreshTeamScoreboard(killer.server, team);
             checkWinCondition(killer, state, team, saveState);
         }
     }
@@ -511,7 +562,7 @@ public final class StructureRaceEvents {
         state.lastFindTime = player.getServerWorld().getTime();
         saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
         broadcastScore(player, team, "踏入" + dimName, score, team.totalScore);
-        updateTeamScoreboard(player.server, team);
+        refreshTeamScoreboard(player.server, team);
         checkWinCondition(player, state, team, saveState);
     }
 
@@ -674,7 +725,7 @@ public final class StructureRaceEvents {
             saveState.getPlayerData(player.getUuid()).lastFindTime = gameTime;
             saveState.markDirty();
 
-            updateTeamScoreboard(player.server, team);
+            refreshTeamScoreboard(player.server, team);
 
             String structName = structKey.getValue().getPath().replace('_', ' ');
             broadcastScore(player, team, "发现" + structName, finalScore, team.totalScore);
@@ -731,7 +782,7 @@ public final class StructureRaceEvents {
         saveState.getPlayerData(player.getUuid()).lastFindTime = gameTime;
         saveState.markDirty();
 
-        updateTeamScoreboard(player.server, team);
+        refreshTeamScoreboard(player.server, team);
 
         String biomeName = biomeKey.getValue().getPath().replace('_', ' ');
         broadcastScore(player, team, "探索" + biomeName, scoreValue, team.totalScore);
@@ -755,6 +806,10 @@ public final class StructureRaceEvents {
                             + "§e🎉 §6队伍 " + team.teamId + " §r率先达到 §6" + team.totalScore
                             + "§r 分，获得胜利！ §e🎉"), false);
             LOGGER.info("[StructureRace] 队伍 {} 获胜！{} 分", team.teamId, team.totalScore);
+            // 比赛结束：全体玩家回大厅（waiting 状态）
+            for (ServerPlayerEntity p : player.server.getPlayerManager().getPlayerList()) {
+                teleportToLobby(p);
+            }
         }
     }
 
@@ -798,42 +853,55 @@ public final class StructureRaceEvents {
         if (sbTeam == null) {
             sbTeam = scoreboard.addTeam(sbName);
         }
-        sbTeam.setColor(TEAM_COLORS[team.colorIndex % TEAM_COLORS.length]);
+        sbTeam.setColor(StructureRaceConfig.TEAM_FORMATTING.getOrDefault(team.teamId,
+                TEAM_COLORS[team.colorIndex % TEAM_COLORS.length]));
         return sbTeam;
     }
 
-    private static void updateTeamScoreboard(MinecraftServer server, StructureRaceState.TeamData team) {
-        for (UUID uuid : team.members) {
-            ServerPlayerEntity p = server.getPlayerManager().getPlayer(uuid);
-            if (p != null) {
-                updateScoreboard(p, team.totalScore);
+    /** 刷新单支队伍的计分板条目：有成员显示「队名 + 总分」，无成员不显示 */
+    private static void refreshTeamScoreboard(MinecraftServer server, StructureRaceState.TeamData team) {
+        Scoreboard scoreboard = server.getScoreboard();
+        ScoreboardObjective objective = getOrCreateObjective(scoreboard);
+        String key = TEAM_SCOREBOARD_KEYS.get(team.teamId);
+        if (team.members.isEmpty()) {
+            if (key != null) {
+                scoreboard.resetPlayerScore(key, objective);
+                TEAM_SCOREBOARD_KEYS.remove(team.teamId);
+            }
+            return;
+        }
+        if (key == null) {
+            key = teamScoreboardKey(team);
+            TEAM_SCOREBOARD_KEYS.put(team.teamId, key);
+        }
+        scoreboard.getPlayerScore(key, objective).setScore(team.totalScore);
+    }
+
+    /** 刷新所有队伍的计分板（入场/加减分/开始重置时调用） */
+    private static void refreshAllTeamScoreboards(MinecraftServer server) {
+        StructureRaceState state = StructureRaceState.get(server.getOverworld());
+        for (StructureRaceState.TeamData team : state.getAllTeams().values()) {
+            refreshTeamScoreboard(server, team);
+        }
+        // 清理已不存在的队伍（解散等）的残留条目
+        Scoreboard scoreboard = server.getScoreboard();
+        ScoreboardObjective objective = scoreboard.getNullableObjective(
+                StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
+        if (objective != null) {
+            for (Map.Entry<String, String> e : new ArrayList<>(TEAM_SCOREBOARD_KEYS.entrySet())) {
+                if (state.getTeam(e.getKey()) == null) {
+                    scoreboard.resetPlayerScore(e.getValue(), objective);
+                    TEAM_SCOREBOARD_KEYS.remove(e.getKey());
+                }
             }
         }
     }
 
-    /** 刷新某玩家的计分板条目名（加入/离开队伍后队名变化时调用）；观众（无队伍）不显示计分板 */
-    private static void refreshScoreboardKey(ServerPlayerEntity player) {
-        Scoreboard scoreboard = player.getScoreboard();
-        ScoreboardObjective objective = getOrCreateObjective(scoreboard);
-        String oldKey = PLAYER_SCOREBOARD_KEYS.remove(player.getUuid());
-        if (oldKey != null) {
-            scoreboard.resetPlayerScore(oldKey, objective);
-        }
-        // 观众（无队伍）：移除后不再重建
-        if (playerTeamMap.get(player.getUuid()) == null) return;
-        String newKey = computeScoreboardKey(player, scoreboard, objective);
-        PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), newKey);
-    }
-
-    /** 隐藏某玩家的计分板条目（观众无队伍时调用） */
-    private static void hidePlayerScoreboard(ServerPlayerEntity player) {
-        Scoreboard scoreboard = player.getScoreboard();
-        ScoreboardObjective objective = scoreboard.getNullableObjective(
-                StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
-        String key = PLAYER_SCOREBOARD_KEYS.remove(player.getUuid());
-        if (objective != null && key != null) {
-            scoreboard.resetPlayerScore(key, objective);
-        }
+    /** 计分板条目名：队伍颜色 + 中文队名（如「§c红队」） */
+    private static String teamScoreboardKey(StructureRaceState.TeamData team) {
+        Formatting color = StructureRaceConfig.TEAM_FORMATTING.get(team.teamId);
+        String zh = StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(team.teamId, team.teamId);
+        return (color != null ? color.toString() : "") + zh;
     }
 
     // ==================== 比赛控制（供 /race 命令调用） ====================
@@ -856,13 +924,25 @@ public final class StructureRaceEvents {
         state.markDirty();
 
         PLAYER_STATES.clear();
-        PLAYER_SCOREBOARD_KEYS.clear();
+        TEAM_SCOREBOARD_KEYS.clear();
         SCORE_LOG.clear(); // 新一局，清空上局得分记录
         lastAnnouncedSeconds = -1;
         lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
         cachedMatchActive = true;
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
+
+        // 已入队玩家从大厅传送到主世界出生点开始比赛；观众留在大厅
+        BlockPos spawnPos = overworld.getSpawnPos();
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            if (state.getTeamByMember(player.getUuid()) != null) {
+                player.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
+                        spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
+                player.changeGameMode(GameMode.SURVIVAL);
+            } else {
+                player.changeGameMode(GameMode.SPECTATOR);
+            }
+        }
 
         // 为所有在线玩家重建竞速状态（模拟 JOIN 初始化）
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
@@ -919,21 +999,16 @@ public final class StructureRaceEvents {
         state.matchActive = false;
         state.markDirty();
 
-        // 先把所有在线玩家的计分板分数归零（必须在清空 PLAYER_SCOREBOARD_KEYS 之前）
-        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            String key = PLAYER_SCOREBOARD_KEYS.get(player.getUuid());
-            if (key != null) {
-                Scoreboard sb = player.getScoreboard();
-                ScoreboardObjective obj = sb.getNullableObjective(StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
-                if (obj != null) {
-                    sb.getPlayerScore(key, obj).setScore(0);
-                }
-            }
-        }
         PLAYER_STATES.clear();
-        PLAYER_SCOREBOARD_KEYS.clear();
+        TEAM_SCOREBOARD_KEYS.clear();
         SCORE_LOG.clear(); // 重置比赛，清空得分记录
         cachedMatchActive = false;
+        // 队伍分数已归零，刷新队伍计分板（无成员队伍不显示）
+        refreshAllTeamScoreboards(server);
+        // 重置后回到准备阶段：全体玩家回大厅
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            teleportToLobby(p);
+        }
         server.getPlayerManager().broadcast(Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX + "§c比赛已重置（未开始）。§r"), false);
     }
@@ -988,12 +1063,10 @@ public final class StructureRaceEvents {
                 }
             }
             playerTeamMap.remove(uuid);
-            // 离开队伍后（观众）：不显示计分板
-            if (p != null) {
-                refreshScoreboardKey(p);
-            }
         }
         state.removeTeam(teamId);
+        // 刷新队伍计分板（被解散队伍条目一并移除）
+        refreshAllTeamScoreboards(server);
         LOGGER.info("[StructureRace] 解散队伍: {}", teamId);
         return true;
     }
@@ -1032,9 +1105,8 @@ public final class StructureRaceEvents {
         }
         player.changeGameMode(GameMode.SURVIVAL);
 
-        // 刷新计分板条目名（加上队名）并显示队总分
-        refreshScoreboardKey(player);
-        updateScoreboard(player, newTeam.totalScore);
+        // 刷新队伍计分板（加入/换队后重算各队条目）
+        refreshAllTeamScoreboards(server);
         LOGGER.info("[StructureRace] 玩家 {} 加入队伍 {}", playerName, teamId);
         return 0;
     }
@@ -1057,11 +1129,29 @@ public final class StructureRaceEvents {
         if (cachedMatchActive) {
             player.changeGameMode(GameMode.SPECTATOR);
         }
-        refreshScoreboardKey(player);
-        PlayerState ps = PLAYER_STATES.get(player.getUuid());
-        updateScoreboard(player, ps != null ? ps.totalScore : 0);
+        // 刷新队伍计分板（队伍可能变空，无人队伍不显示）
+        refreshAllTeamScoreboards(server);
         LOGGER.info("[StructureRace] 玩家 {} 已离开队伍 {}", playerName, team.teamId);
         return 0;
+    }
+
+    /**
+     * 玩家自助加入/换队（/race join）。返回 0=成功, 1=比赛进行中禁止换队, 2=队伍不存在。
+     * 仅准备阶段（waiting）可自由组队；比赛进行中由管理员强制调整。
+     */
+    public static int joinTeam(MinecraftServer server, ServerPlayerEntity player, String teamId) {
+        if (cachedMatchActive) return 1; // 比赛进行中不能换队
+        StructureRaceState state = StructureRaceState.get(server.getOverworld());
+        if (state.getTeam(teamId) == null) return 2;
+        return addPlayerToTeam(server, player.getEntityName(), teamId) == 0 ? 0 : 3;
+    }
+
+    /**
+     * 玩家自助离开队伍（/race leave）。返回 0=成功, 1=比赛进行中禁止, 2=无队伍。
+     */
+    public static int leaveTeam(MinecraftServer server, ServerPlayerEntity player) {
+        if (cachedMatchActive) return 1; // 比赛进行中不能离队
+        return removePlayerFromTeam(server, player.getEntityName()) == 0 ? 0 : 2;
     }
 
     /** 机制3：队伍召回。返回 0=成功，其他值见错误码。 */
@@ -1111,7 +1201,7 @@ public final class StructureRaceEvents {
         target.addStatusEffect(new StatusEffectInstance(StatusEffects.RESISTANCE, 100, 2, false, true, true));
         target.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 1, false, true, true));
 
-        updateTeamScoreboard(server, targetTeam);
+        refreshTeamScoreboard(server, targetTeam);
         server.getPlayerManager().broadcast(Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX
                         + "§c[" + targetTeam.teamId + "]§r §a" + target.getEntityName()
@@ -1243,19 +1333,6 @@ public final class StructureRaceEvents {
 
     // ==================== 计分板 ====================
 
-    private static void updateScoreboard(ServerPlayerEntity player, int newScore) {
-        Scoreboard scoreboard = player.getScoreboard();
-        ScoreboardObjective objective = getOrCreateObjective(scoreboard);
-        String key = PLAYER_SCOREBOARD_KEYS.get(player.getUuid());
-        if (key == null) {
-            // 观众（无队伍）：不在计分板显示
-            if (playerTeamMap.get(player.getUuid()) == null) return;
-            key = computeScoreboardKey(player, scoreboard, objective);
-            PLAYER_SCOREBOARD_KEYS.put(player.getUuid(), key);
-        }
-        scoreboard.getPlayerScore(key, objective).setScore(newScore);
-    }
-
     private static ScoreboardObjective getOrCreateObjective(Scoreboard scoreboard) {
         ScoreboardObjective objective = scoreboard.getNullableObjective(
                 StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
@@ -1265,38 +1342,12 @@ public final class StructureRaceEvents {
                     ScoreboardCriterion.DUMMY,
                     Text.literal(StructureRaceConfig.SCOREBOARD_DISPLAY_NAME),
                     ScoreboardCriterion.RenderType.INTEGER);
-            scoreboard.setObjectiveSlot(0, objective);
+            // 仅侧边栏显示（Tab 玩家列表不显示分数，只显示带队伍颜色的玩家名）
             scoreboard.setObjectiveSlot(1, objective);
             LOGGER.info("[StructureRace] 已创建计分板目标: {}",
                     StructureRaceConfig.SCOREBOARD_OBJECTIVE_NAME);
         }
         return objective;
-    }
-
-    /** 计分板条目名：有队伍显示「[队名]玩家名」；观众（无队伍）不显示计分板，不调用本方法 */
-    private static String computeScoreboardKey(ServerPlayerEntity player, Scoreboard scoreboard,
-                                                ScoreboardObjective objective) {
-        String teamName = playerTeamMap.get(player.getUuid());
-        String rawName = teamName != null
-                ? "[" + teamName + "]" + player.getEntityName()
-                : player.getEntityName();
-        String truncated = truncatePlayerName(rawName);
-        Set<String> used = new HashSet<>();
-        for (Map.Entry<UUID, String> e : PLAYER_SCOREBOARD_KEYS.entrySet()) {
-            if (!e.getKey().equals(player.getUuid())) used.add(e.getValue());
-        }
-        String key = truncated;
-        int suffix = 2;
-        while (used.contains(key)) {
-            key = truncatePlayerName(rawName) + "~" + suffix++;
-        }
-        return key;
-    }
-
-    private static String truncatePlayerName(String name) {
-        int max = StructureRaceConfig.MAX_SCOREBOARD_NAME_LENGTH;
-        if (name.length() <= max) return name;
-        return name.substring(0, max - 1) + "\u2026";
     }
 
     // ==================== 广播 ====================

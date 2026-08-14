@@ -2,10 +2,12 @@ package com.example.structurerace;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.gen.structure.Structure;
@@ -73,6 +75,44 @@ public final class StructureRaceConfig {
 
     /** 队伍可选颜色数量（Tab 列表名字颜色按创建顺序循环分配） */
     public static final int TEAM_COLOR_COUNT = 8;
+
+    // ==================== 默认队伍（起床战争式，8 支固定） ====================
+
+    /** 默认队伍 ID（固定 8 支，玩家通过 /race join <颜色> 加入；不自定义队名） */
+    public static final List<String> DEFAULT_TEAM_IDS = List.of(
+            "red", "blue", "yellow", "orange", "green", "white", "black", "purple");
+
+    /** 队伍 ID → 中文队名 */
+    public static final Map<String, String> TEAM_NAMES_ZH = createTeamZhNames();
+
+    /** 队伍 ID → 颜色（计分板条目与 Tab 玩家名颜色） */
+    public static final Map<String, Formatting> TEAM_FORMATTING = createTeamFormattings();
+
+    private static Map<String, String> createTeamZhNames() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("red", "红队");
+        m.put("blue", "蓝队");
+        m.put("yellow", "黄队");
+        m.put("orange", "橙队");
+        m.put("green", "绿队");
+        m.put("white", "白队");
+        m.put("black", "黑队");
+        m.put("purple", "紫队");
+        return Collections.unmodifiableMap(m);
+    }
+
+    private static Map<String, Formatting> createTeamFormattings() {
+        Map<String, Formatting> m = new LinkedHashMap<>();
+        m.put("red", Formatting.RED);
+        m.put("blue", Formatting.BLUE);
+        m.put("yellow", Formatting.YELLOW);
+        m.put("orange", Formatting.GOLD);
+        m.put("green", Formatting.GREEN);
+        m.put("white", Formatting.WHITE);
+        m.put("black", Formatting.BLACK);
+        m.put("purple", Formatting.LIGHT_PURPLE);
+        return Collections.unmodifiableMap(m);
+    }
 
     // ==================== 结构/群系中文名映射 ====================
 

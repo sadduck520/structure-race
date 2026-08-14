@@ -27,11 +27,11 @@ import java.util.List;
  *   <li><b>{@code /race status}</b> —— 查看当前模式、状态与剩余时间</li>
  *   <li><b>{@code /race time}</b> —— 查看限时制剩余时间</li>
  *   <li><b>{@code /race top}</b> —— 显示当前积分排行榜</li>
+ *   <li><b>{@code /race join &lt;颜色&gt;}</b> —— 加入/切换到指定队伍（无需 OP，仅准备阶段，red/blue/yellow/orange/green/white/black/purple）</li>
+ *   <li><b>{@code /race leave}</b> —— 离开队伍成为观众（无需 OP，仅准备阶段）</li>
  *   <li><b>{@code /race recall [玩家]}</b> —— 队伍召回（需同队，消耗 10 分，5 分钟冷却）</li>
- *   <li><b>{@code /race team create &lt;名称&gt;}</b> —— 创建队伍</li>
- *   <li><b>{@code /race team disband &lt;名称&gt;}</b> —— 解散队伍</li>
- *   <li><b>{@code /race team add &lt;玩家&gt; &lt;队伍&gt;}</b> —— 将玩家移入队伍（自动离开原队伍）</li>
- *   <li><b>{@code /race team remove &lt;玩家&gt;}</b> —— 将玩家移出队伍</li>
+ *   <li><b>{@code /race team add &lt;玩家&gt; &lt;队伍&gt;}</b> —— 将玩家移入队伍（管理员强制分配，比赛进行中也生效）</li>
+ *   <li><b>{@code /race team remove &lt;玩家&gt;}</b> —— 将玩家移出队伍（管理员）</li>
  *   <li><b>{@code /race team list}</b> —— 查看所有队伍与成员</li>
  *   <li><b>{@code /race team info &lt;队伍&gt;}</b> —— 查看队伍的已发现结构/群系（中文名）</li>
  *   <li><b>{@code /race team check &lt;队伍&gt; &lt;结构&gt;}</b> —— 查询某结构是否已被该队伍发现</li>
@@ -43,8 +43,13 @@ public final class StructureRaceCommand {
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            // /race recall 无需 OP（普通队员可用）
+            // /race join /race leave /race recall 无需 OP（普通玩家可用）
             dispatcher.register(CommandManager.literal("race")
+                    .then(CommandManager.literal("join")
+                            .then(CommandManager.argument("color", StringArgumentType.word())
+                                    .executes(ctx -> join(ctx))))
+                    .then(CommandManager.literal("leave")
+                            .executes(ctx -> leave(ctx)))
                     .then(CommandManager.literal("recall")
                             .executes(ctx -> recall(ctx, ""))
                             .then(CommandManager.argument("player", StringArgumentType.word())
@@ -71,12 +76,6 @@ public final class StructureRaceCommand {
                     .then(CommandManager.literal("time").executes(ctx -> time(ctx)))
                     .then(CommandManager.literal("top").executes(ctx -> top(ctx)))
                     .then(CommandManager.literal("team")
-                            .then(CommandManager.literal("create")
-                                    .then(CommandManager.argument("name", StringArgumentType.word())
-                                            .executes(ctx -> teamCreate(ctx))))
-                            .then(CommandManager.literal("disband")
-                                    .then(CommandManager.argument("name", StringArgumentType.word())
-                                            .executes(ctx -> teamDisband(ctx))))
                             .then(CommandManager.literal("add")
                                     .then(CommandManager.argument("player", StringArgumentType.word())
                                             .then(CommandManager.argument("team", StringArgumentType.word())
@@ -96,6 +95,51 @@ public final class StructureRaceCommand {
     }
 
     // ==================== 比赛控制 ====================
+
+    private static int join(CommandContext<ServerCommandSource> ctx) {
+        String color = StringArgumentType.getString(ctx, "color").toLowerCase();
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
+            return 0;
+        }
+        int result = StructureRaceEvents.joinTeam(ctx.getSource().getServer(), player, color);
+        switch (result) {
+            case 1:
+                ctx.getSource().sendError(Text.literal("比赛进行中不能换队，请等待比赛结束或由管理员调整。"));
+                return 0;
+            case 2:
+                ctx.getSource().sendError(Text.literal("队伍 \"" + color + "\" 不存在。可用队伍："
+                        + String.join("、", StructureRaceConfig.DEFAULT_TEAM_IDS)));
+                return 0;
+            default:
+                ctx.getSource().sendFeedback(() -> Text.literal(
+                        StructureRaceConfig.BROADCAST_PREFIX + "你已加入 §6"
+                                + StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(color, color) + "§r。"), false);
+                return 1;
+        }
+    }
+
+    private static int leave(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(Text.literal("该指令必须由玩家执行。"));
+            return 0;
+        }
+        int result = StructureRaceEvents.leaveTeam(ctx.getSource().getServer(), player);
+        switch (result) {
+            case 1:
+                ctx.getSource().sendError(Text.literal("比赛进行中不能离队，请等待比赛结束或由管理员调整。"));
+                return 0;
+            case 2:
+                ctx.getSource().sendError(Text.literal("你不在任何队伍中。"));
+                return 0;
+            default:
+                ctx.getSource().sendFeedback(() -> Text.literal(
+                        StructureRaceConfig.BROADCAST_PREFIX + "你已离开队伍。"), false);
+                return 1;
+        }
+    }
 
     private static int recall(CommandContext<ServerCommandSource> ctx, String target) {
         ServerPlayerEntity actor = ctx.getSource().getPlayer();
@@ -221,30 +265,6 @@ public final class StructureRaceCommand {
     }
 
     // ==================== 队伍管理 ====================
-
-    private static int teamCreate(CommandContext<ServerCommandSource> ctx) {
-        String name = StringArgumentType.getString(ctx, "name");
-        boolean ok = StructureRaceEvents.createTeam(ctx.getSource().getServer(), name);
-        if (!ok) {
-            ctx.getSource().sendError(Text.literal("队伍 \"" + name + "\" 已存在。"));
-            return 0;
-        }
-        ctx.getSource().sendFeedback(() -> Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "已创建队伍 \"" + name + "\"。"), true);
-        return 1;
-    }
-
-    private static int teamDisband(CommandContext<ServerCommandSource> ctx) {
-        String name = StringArgumentType.getString(ctx, "name");
-        boolean ok = StructureRaceEvents.disbandTeam(ctx.getSource().getServer(), name);
-        if (!ok) {
-            ctx.getSource().sendError(Text.literal("队伍 \"" + name + "\" 不存在。"));
-            return 0;
-        }
-        ctx.getSource().sendFeedback(() -> Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "已解散队伍 \"" + name + "\"。"), true);
-        return 1;
-    }
 
     private static int teamAdd(CommandContext<ServerCommandSource> ctx) {
         String player = StringArgumentType.getString(ctx, "player");

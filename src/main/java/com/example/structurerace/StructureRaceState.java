@@ -111,8 +111,30 @@ public final class StructureRaceState extends PersistentState {
     // ==================== 工厂 ====================
 
     public static StructureRaceState get(ServerWorld world) {
-        return world.getPersistentStateManager().getOrCreate(
+        StructureRaceState state = world.getPersistentStateManager().getOrCreate(
                 StructureRaceState::fromNbt, StructureRaceState::new, STATE_KEY);
+        state.ensureDefaultTeams();
+        return state;
+    }
+
+    /** 确保 8 支默认队伍存在（起床战争式固定队伍，不自定义队名） */
+    public void ensureDefaultTeams() {
+        boolean changed = false;
+        int index = 0;
+        for (String teamId : StructureRaceConfig.DEFAULT_TEAM_IDS) {
+            if (!teams.containsKey(teamId)) {
+                TeamData t = new TeamData();
+                t.teamId = teamId;
+                t.colorIndex = index;
+                teams.put(teamId, t);
+                changed = true;
+            }
+            index++;
+        }
+        if (changed) {
+            markDirty();
+            LOGGER.info("[StructureRace] 已补全默认队伍（8 支固定颜色队伍）。");
+        }
     }
 
     // ==================== 玩家查询 ====================
