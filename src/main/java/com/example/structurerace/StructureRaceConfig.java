@@ -109,7 +109,7 @@ public final class StructureRaceConfig {
         m.put("orange", Formatting.GOLD);
         m.put("green", Formatting.GREEN);
         m.put("white", Formatting.WHITE);
-        m.put("black", Formatting.BLACK);
+        m.put("black", Formatting.DARK_GRAY); // 纯黑在计分板/聊天中不可见，改用深灰
         m.put("purple", Formatting.LIGHT_PURPLE);
         return Collections.unmodifiableMap(m);
     }
@@ -162,6 +162,7 @@ public final class StructureRaceConfig {
 
     private static Map<String, String> createBiomeNames() {
         Map<String, String> m = new LinkedHashMap<>();
+        m.put("minecraft:swamp", "沼泽");
         m.put("minecraft:desert", "沙漠");
         m.put("minecraft:jungle", "丛林");
         m.put("minecraft:bamboo_jungle", "竹林");
@@ -273,6 +274,7 @@ public final class StructureRaceConfig {
 
     private static Map<RegistryKey<Biome>, Integer> createBiomeScores() {
         Map<RegistryKey<Biome>, Integer> map = new LinkedHashMap<>();
+        map.put(biomeKey("swamp"), 5);
         map.put(biomeKey("desert"), 5);
         map.put(biomeKey("jungle"), 4);
         map.put(biomeKey("bamboo_jungle"), 5);
@@ -333,9 +335,21 @@ public final class StructureRaceConfig {
     /** 迷路指引：检索半径（格） */
     public static final int HINT_SEARCH_RADIUS = 2048;
 
+    /** 迷路指引：个人「距上次发现」无加分超过该时长（tick，3 分钟）即触发一次提示 */
+    public static final long HINT_NO_FIND_TICKS = 180L * 20L;
+
+    /** 迷路指引：提示后个人冷却（tick，7 分钟），冷却结束后重新开始 3 分钟计时 */
+    public static final long HINT_COOLDOWN_TICKS = 420L * 20L;
+
+    /** 玩家进服后先在主世界地底等待加载的时长（tick，10 秒），随后传送至大厅 */
+    public static final int JOIN_WAIT_TICKS = 200;
+
+    /** /race start 后开赛倒计时（tick，5 秒），倒计时结束后才传送/清背包/开赛 */
+    public static final int START_COUNTDOWN_TICKS = 100;
+
     /** 规则书页面内容（玩法/规则/指令/积分关系）。
      * 书页为浅色底，统一使用深色文字；每页不超过 13 行、每行不超过 14 个全角字符，
-     * 避免书页排版截断导致显示不全。 */
+     * 避免书页排版截断导致显示不全。含目录页，方便玩家按章节查阅。 */
     public static java.util.List<String> getRuleBookPages() {
         java.util.List<String> pages = new java.util.ArrayList<>();
         pages.add("§l§n结构竞速·玩法指南§r\n"
@@ -343,121 +357,124 @@ public final class StructureRaceConfig {
                 + "多人团队探索竞速：\n"
                 + "发现结构与稀有群系，\n"
                 + "为你的队伍赚取积分。\n"
-                + "§l【第一步·组队】§r\n"
+                + "§l【目录】§r\n"
+                + "① 组队方法…第2页\n"
+                + "② 游戏流程…第3页\n"
+                + "③ 结构计分…第4页\n"
+                + "④ 群系计分…第5页\n"
+                + "⑤ 其他积分…第6页\n"
+                + "⑥ 指令…第7页\n"
+                + "⑦ 快捷键…第8页\n"
+                + "⑧ 特殊机制…第9页\n"
+                + "⑨ 获胜结算…第10页\n"
+                + "⑩ 结构分值…第11页");
+        pages.add("§l① 组队方法§r\n"
                 + "手持指南针（队伍选择\n"
                 + "器）右键打开选队界面\n"
                 + "点击颜色羊毛加入队伍\n"
                 + "点击屏障退出成观众\n"
                 + "指令§1 /race join <颜色>§r\n"
                 + "red红 blue蓝 yellow黄\n"
-                + "orange橙 green绿 white");
-        pages.add("§l§n游戏目标与流程§r\n"
-                + "§l【目标】§r\n"
-                + "探索主世界/下界/末地，\n"
-                + "发现结构与稀有群系，\n"
-                + "总分最高的队伍获胜。\n"
-                + "§l【流程】§r\n"
+                + "orange橙 green绿 white\n"
+                + "black黑 purple紫\n"
+                + "8 色队伍任选其一！");
+        pages.add("§l② 游戏流程§r\n"
                 + "1.在大厅完成组队\n"
-                + "2.管理员执行\n"
-                + "§1/race start§r\n"
-                + "3.全员传送至主世界\n"
-                + "出生点开始竞速\n"
-                + "4.结束宣布胜负\n"
-                + "并回到大厅");
-        pages.add("§l§n结构计分规则§r\n"
+                + "2.管理员执行§1/race start§r\n"
+                + "3.全体5秒倒计时后\n"
+                + "传送至主世界出生点\n"
+                + "4.开始探索竞速计分\n"
+                + "5.结束公布排名\n"
+                + "胜利队10秒后回大厅\n"
+                + "燃放烟花庆祝");
+        pages.add("§l③ 结构计分规则§r\n"
                 + "§l【发现即加分】§r\n"
                 + "首次发现竞速结构，\n"
                 + "为所在队伍加分。\n"
                 + "§l【同队不重复】§r\n"
-                + "结构得分全队共享：\n"
                 + "同队任何人再次进入\n"
-                + "已发现的结构，\n"
+                + "已发现结构，\n"
                 + "不重复加分。\n"
                 + "§l【占有制】§r\n"
                 + "结构被任意队伍发现\n"
                 + "后即被该队占有，\n"
                 + "其他队找到同一实例\n"
                 + "不得分。先到先得！");
-        pages.add("§l§n群系规则与其他§r\n"
-                + "§l【群系规则】§r\n"
+        pages.add("§l④ 群系计分规则§r\n"
+                + "§l【规则】§r\n"
                 + "首次踏入目标群系\n"
                 + "为队伍加分；群系\n"
                 + "不占有，每队可各自\n"
                 + "获得；已探索的\n"
                 + "群系不再加分。\n"
-                + "§l【里程】§r\n"
-                + "步行/飞行每500格+1分\n"
-                + "坐船行驶不计里程\n"
-                + "§l【击杀】§r\n"
-                + "每击杀10只敌对怪物\n"
-                + "+1分（含远程击杀）");
-        pages.add("§l§n维度与群系分值§r\n"
-                + "§l【维度探索】§r\n"
-                + "首次下界+10 末地+20\n"
-                + "（每队各一次）\n"
-                + "§l【林地府邸】§r\n"
-                + "携带探险家地图+50\n"
-                + "无地图+30\n"
                 + "§l【群系分值】§r\n"
                 + "蘑菇岛20 深暗之域15\n"
-                + "冰刺之地8 溶洞6\n"
-                + "冰封山峰6 尖峭山峰6\n"
-                + "雪坡4 雪林4 草甸3\n"
-                + "繁花森林4 竹林5\n"
-                + "恶地5 沙漠5 丛林4");
-        pages.add("§l§n群系分值(续)§r\n"
-                + "稀疏丛林3 黑森林3\n"
-                + "红树林5 樱花4 风袭4\n"
-                + "积雪平原4 积雪针叶林4\n"
-                + "原始白桦3 蘑菇海域…\n"
-                + "其余完整分值见\n"
-                + "§1/race point§r\n"
-                + "§l§n常用指令§r\n"
+                + "冰刺之地8 沼泽5\n"
+                + "竹林5 红树林5\n"
+                + "完整分值见§1/race point§r\n"
+                + "或按 §1P§r 键查看");
+        pages.add("§l⑤ 其他积分来源§r\n"
+                + "§l【里程】§r\n"
+                + "步行/飞行每500格+1分\n"
+                + "坐船行驶不计里程。\n"
+                + "§l【击杀】§r\n"
+                + "每击杀10只敌对怪物\n"
+                + "+1分（含远程击杀）。\n"
+                + "§l【维度探索】§r\n"
+                + "首次进入下界+10\n"
+                + "首次进入末地+20。\n"
+                + "§l【林地府邸】§r\n"
+                + "携带探险家地图+50\n"
+                + "无地图+30");
+        pages.add("§l⑥ 常用指令§r\n"
                 + "§1/race join <颜色>§r\n"
                 + "加入/切换队伍\n"
                 + "§1/race leave§r 离队\n"
-                + "§1/race time§r 剩余\n"
-                + "§1/race top§r 排名");
-        pages.add("§l§n常用指令与快捷键§r\n"
+                + "§1/race time§r 剩余时间\n"
+                + "§1/race top§r 队伍排名\n"
                 + "§1/race status§r 状态\n"
-                + "§1/race recall§r 召回\n"
+                + "§1/race recall§r 召回队友\n"
                 + "（耗10分，冷却5分钟）\n"
                 + "§1/race point§r 积分映射\n"
-                + "§1/race progress§r 进度\n"
-                + "§l【快捷键】§r\n"
-                + "§1K§r规则 §1P§r积分\n"
-                + "§1U§r进度（可在按键\n"
-                + "设置中修改）\n"
+                + "§1/race progress§r 进度");
+        pages.add("§l⑦ 快捷键§r\n"
+                + "§1K§r 规则书\n"
+                + "§1P§r 积分映射\n"
+                + "§1U§r 竞速进度\n"
+                + "可在按键设置中修改\n"
+                + "§l【聊天】§r\n"
+                + "比赛时普通消息仅\n"
+                + "本队可见（队聊）\n"
+                + "§1!§r开头为全局消息\n"
                 + "§l【队伍锁定】§r\n"
                 + "比赛进行中不能换队\n"
                 + "无队伍玩家为观众");
-        pages.add("§l§n特殊机制§r\n"
+        pages.add("§l⑧ 特殊机制§r\n"
                 + "§l【落后补偿】§r\n"
-                + "落后第一名20分以上，\n"
+                + "落后第一名20分以上\n"
                 + "全员获得速度提升I\n"
                 + "§l【迷路指引】§r\n"
-                + "5分钟无得分自动查询\n"
-                + "最近结构，提示坐标\n"
-                + "与距离（仅本人可见）\n"
-                + "100格内不提示，\n"
-                + "1分钟后重查\n"
+                + "3分钟无任何发现，\n"
+                + "自动提示最近结构\n"
+                + "坐标与距离；\n"
+                + "提示后冷却7分钟。\n"
                 + "§l【防作弊】§r\n"
                 + "单次位移超50格视为\n"
-                + "传送，不计入里程");
-        pages.add("§l§n获胜与结算§r\n"
+                + "传送，不计入里程。");
+        pages.add("§l⑨ 获胜与结算§r\n"
                 + "§l【积分制】§r\n"
                 + "率先达到目标分数\n"
-                + "（默认100）获胜\n"
+                + "（默认100）获胜。\n"
                 + "§l【限时制】§r\n"
-                + "时间到得分最高获胜\n"
-                + "§1/race time§r 查剩余\n"
+                + "时间到得分最高获胜；\n"
+                + "§1/race time§r 查剩余。\n"
                 + "§l【平局】§r\n"
-                + "多队同分并列判平局\n"
+                + "多队同分并列判平局。\n"
                 + "§l【结算】§r\n"
                 + "公布各队排名，胜利\n"
                 + "队显示恭喜获胜；\n"
-                + "10秒后回大厅放烟花");
-        pages.add("§l§n结构分值一览§r\n"
+                + "10秒后回大厅放烟花。");
+        pages.add("§l⑩ 结构分值一览§r\n"
                 + "远古城市25 堡垒遗迹18\n"
                 + "林地府邸30/50 末地城40\n"
                 + "下界堡垒15 要塞30\n"

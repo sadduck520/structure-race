@@ -116,10 +116,10 @@ public final class StructureRaceEvents {
     /** 机制5：落后队伍补偿判定分差（落后第一名 20 分即触发速度补偿） */
     private static final int COMPENSATION_GAP = 20;
 
-    /** 机制6：连续 5 分钟无任何发现触发指引 */
-    private static final long FIND_TIMEOUT_TICKS = 300L * 20L;
-    /** 机制6：指引全局冷却（10 分钟） */
-    private static final long GUIDE_GLOBAL_COOLDOWN_TICKS = 600L * 20L;
+    /** 机制6：迷路指引 - 个人「3 分钟无发现」计时（引用 Config 常量） */
+    private static final long HINT_NO_FIND_TICKS = StructureRaceConfig.HINT_NO_FIND_TICKS;
+    /** 机制6：迷路指引 - 提示后个人 7 分钟冷却 */
+    private static final long HINT_COOLDOWN_TICKS = StructureRaceConfig.HINT_COOLDOWN_TICKS;
 
     // ==================== 内存状态 ====================
 
@@ -135,6 +135,14 @@ public final class StructureRaceEvents {
     private static final int LOBBY_PLATFORM_SIZE = 40;
     private static final int LOBBY_PLATFORM_Y = 64;
     private static boolean lobbyInitialized = false;
+
+    /** 进服等待点：主世界出生点地底（基岩层 y=-64 上 3 格空间） */
+    private static final int LOBBY_WAIT_Y = -64;
+    private static BlockPos lobbyWaitPos;
+
+    /** /race start 后开赛倒计时（tick）；>0 表示正在倒计时 */
+    private static int preStartCountdownTicks = -1;
+    private static long lastCountdownSecond = -1;
 
     /** 比赛结算延迟（tick）：宣布结果后 10 秒传送回大厅并放烟花 */
     private static final int END_RESULT_DELAY_TICKS = 200;
@@ -154,7 +162,6 @@ public final class StructureRaceEvents {
     private static String cachedWinCondition = "score";
     private static int cachedWinScore = StructureRaceConfig.WIN_SCORE;
     private static long lastAnnouncedSeconds = -1;
-    private static long lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
     private static int tickCounter;
 
     private StructureRaceEvents() {}
@@ -165,13 +172,13 @@ public final class StructureRaceEvents {
         ServerTickEvents.END_SERVER_TICK.register(StructureRaceEvents::onServerTick);
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
-                onPlayerSpawn(handler.getPlayer()));
+                onPlayerSpawn(handler.getPlayer(), true));
 
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
                 onPlayerDisconnect(handler.getPlayer()));
 
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
-                onPlayerSpawn(newPlayer));
+                onPlayerSpawn(newPlayer, false));
 
         // 聊天消息：比赛进行中普通消息仅队友可见，`!` 前缀为全局消息
         ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(StructureRaceEvents::handleChatMessage);
@@ -199,16 +206,19 @@ public final class StructureRaceEvents {
             playerTeamMap.clear();
             SCORE_LOG.clear();
             lastAnnouncedSeconds = -1;
-            lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
             tickCounter = 0;
             lobbyInitialized = false;
             pendingEndTicks = -1;
             pendingEndServer = null;
+            preStartCountdownTicks = -1;
+            lastCountdownSecond = -1;
+            lobbyWaitPos = null;
             LOGGER.info("[StructureRace] 新世界服务器启动，内存竞速状态已重置。");
         });
 
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             ensureLobbyPlatform(server);
+            prepareLobbyWaitPoint(server);
             refreshAllTeamScoreboards(server);
         });
 
@@ -232,6 +242,36 @@ public final class StructureRaceEvents {
     private static void onServerTick(MinecraftServer server) {
         tickCounter++;
         tickMatchTimer(server);
+
+        // 开赛倒计时：5 秒倒计时后正式开赛（title 提示，同胜利结算样式）
+        if (preStartCountdownTicks > 0) {
+            preStartCountdownTicks--;
+            long sec = (preStartCountdownTicks + 19) / 20;
+            if (sec != lastCountdownSecond) {
+                lastCountdownSecond = sec;
+                if (sec > 0) {
+                    for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+                        sendTitle(p, "§e§l" + sec, "§r比赛即将开始…", 5, 15, 5);
+                    }
+                }
+            }
+            if (preStartCountdownTicks == 0) {
+                preStartCountdownTicks = -1;
+                try {
+                    executeMatchStart(server);
+                } catch (Exception e) {
+                    LOGGER.error("[StructureRace] 开赛流程异常：{}", e);
+                }
+            }
+        }
+
+        // 大厅维度保持永远白天（每 20 tick 固定正午时刻）
+        if (tickCounter % 20 == 0) {
+            ServerWorld lobby = server.getWorld(LOBBY_KEY);
+            if (lobby != null) {
+                lobby.setTimeOfDay(6000);
+            }
+        }
 
         // 比赛结算延迟倒计时：到点后传送回大厅并放烟花
         if (pendingEndTicks > 0) {
@@ -265,10 +305,43 @@ public final class StructureRaceEvents {
         StructureRaceState saveState = StructureRaceState.get(overworld);
 
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            PlayerState pst = PLAYER_STATES.get(player.getUuid());
+
+            // 开赛倒计时阶段：所有玩家留在大厅等待（尚未传送/清背包）
+            if (preStartCountdownTicks > 0) {
+                if (pst != null) pst.pendingLobby = false;
+                if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) {
+                    teleportToLobby(player);
+                }
+                continue;
+            }
+
             // 准备/结束阶段：玩家必须待在大厅（冒险模式 + 选队装备）；擅自离开大厅的强制送回（OP 豁免）
             if (!cachedMatchActive) {
                 // 结算延迟期间（宣布结果到回大厅的 10 秒）不拉回，让玩家在主世界看完 title
                 if (pendingEndTicks > 0) continue;
+                // 进服等待加载阶段：玩家在主世界地底等待点，倒计时后送大厅
+                if (pst != null && pst.pendingLobby) {
+                    pst.joinTicks++;
+                    if (player.getServerWorld().getRegistryKey() != World.OVERWORLD) {
+                        teleportToWaitPoint(player);
+                    } else if (lobbyWaitPos != null) {
+                        BlockPos pp = player.getBlockPos();
+                        if (Math.abs(pp.getX() - lobbyWaitPos.getX()) > 4
+                                || Math.abs(pp.getZ() - lobbyWaitPos.getZ()) > 4
+                                || pp.getY() < LOBBY_WAIT_Y) {
+                            teleportToWaitPoint(player);
+                        }
+                    }
+                    int left = Math.max(1, (StructureRaceConfig.JOIN_WAIT_TICKS - pst.joinTicks) / 20 + 1);
+                    sendActionBar(player, "§e正在加载世界数据… §7（§6" + left + "§7 秒后进入大厅）");
+                    if (pst.joinTicks >= StructureRaceConfig.JOIN_WAIT_TICKS) {
+                        pst.pendingLobby = false;
+                        teleportToLobby(player);
+                        sendActionBar(player, "§a欢迎来到结构竞速大厅！请用指南针组队。");
+                    }
+                    continue;
+                }
                 if (player.age % 40 == 0) {
                     ensureLobbyGear(player);
                 }
@@ -315,6 +388,8 @@ public final class StructureRaceEvents {
         cachedWinScore = state.winScore;
 
         if (!"timer".equals(state.winCondition) || !state.matchActive) return;
+        // 开赛倒计时阶段不计时（真正开赛时 matchStartTick 才更新）
+        if (preStartCountdownTicks > 0) return;
 
         long currentTick = overworld.getTime();
         long elapsed = currentTick - state.matchStartTick;
@@ -383,7 +458,7 @@ public final class StructureRaceEvents {
 
     // ==================== 玩家加入/离开 ====================
 
-    private static void onPlayerSpawn(ServerPlayerEntity player) {
+    private static void onPlayerSpawn(ServerPlayerEntity player, boolean firstJoin) {
         PlayerState state = PLAYER_STATES.computeIfAbsent(player.getUuid(), k -> {
             PlayerState ps = new PlayerState();
             ps.playerName = player.getEntityName();
@@ -406,7 +481,7 @@ public final class StructureRaceEvents {
             state.killCount = pd.killCount;
             state.lastFindTime = pd.lastFindTime;
         }
-        // 仅首次加入（无持久化记录）时初始化指引计时，避免重进重置
+        // 新玩家（无持久化记录）或上次记录为 0：立即开始个人指引计时（开局无冷却）
         if (state.lastFindTime == 0) {
             state.lastFindTime = overworld.getTime();
         }
@@ -415,7 +490,16 @@ public final class StructureRaceEvents {
         if (!cachedMatchActive) {
             player.changeGameMode(GameMode.ADVENTURE);
             ensureLobbyGear(player);
-            // 直接传送到大厅（无论是否 OP，单机玩家默认 OP 也须进大厅）；异常由 onServerTick 兜底拉回
+            if (firstJoin) {
+                // 首次进服：先到主世界地底等待点加载世界数据（约 10 秒），再进大厅，
+                // 避免「主世界区块尚未生成完就跨维度传送到大厅」导致维度数据串台
+                state.pendingLobby = true;
+                state.joinTicks = 0;
+                teleportToWaitPoint(player);
+                giveSaturation(player);
+                return;
+            }
+            // 死亡重生/重连：直接回大厅
             try {
                 teleportToLobbyIfNotThere(player);
             } catch (Exception e) {
@@ -423,9 +507,9 @@ public final class StructureRaceEvents {
             }
         }
 
-        // 比赛进行中：无队伍玩家 = 主世界旁观者（观众）
+        // 比赛进行中（含开赛倒计时）：无队伍玩家 = 主世界旁观者（观众）；倒计时阶段暂不处理，等开赛时统一传送
         StructureRaceState.TeamData team = saveState.getTeamByMember(player.getUuid());
-        if (cachedMatchActive && team == null) {
+        if (cachedMatchActive && preStartCountdownTicks <= 0 && team == null) {
             if (player.getServerWorld().getRegistryKey() != World.OVERWORLD) {
                 teleportToOverworldSpawn(player);
             }
@@ -517,11 +601,74 @@ public final class StructureRaceEvents {
                 player.getYaw(), player.getPitch());
     }
 
+    // ==================== 进服等待点（主世界地底 y=-64 基岩层） ====================
+
+    /**
+     * 在主世界出生点正下方地底（基岩层 y=-64）准备一个 7x7 玻璃等待区：
+     * 清空 -63/-62 两层空气、-64 铺玻璃补洞（基岩保留作地板）、四周两格玻璃围栏。
+     * 首次进服玩家在此等待世界数据加载完成后才进入大厅，避免维度数据串台。
+     */
+    private static void prepareLobbyWaitPoint(MinecraftServer server) {
+        if (lobbyWaitPos != null) return; // 已生成过则跳过（避免重复写方块）
+        ServerWorld ow = server.getOverworld();
+        BlockPos spawn = ow.getSpawnPos();
+        ow.getChunk(spawn.getX() >> 4, spawn.getZ() >> 4, net.minecraft.world.chunk.ChunkStatus.FULL, true);
+        int wx = spawn.getX(), wz = spawn.getZ();
+        int y0 = LOBBY_WAIT_Y;
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                ow.setBlockState(new BlockPos(wx + dx, y0 + 1, wz + dz), Blocks.AIR.getDefaultState(), 3);
+                ow.setBlockState(new BlockPos(wx + dx, y0 + 2, wz + dz), Blocks.AIR.getDefaultState(), 3);
+                BlockPos floor = new BlockPos(wx + dx, y0, wz + dz);
+                if (ow.getBlockState(floor).isAir() || ow.getBlockState(floor).isReplaceable()) {
+                    ow.setBlockState(floor, Blocks.GLASS.getDefaultState(), 3);
+                }
+            }
+        }
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = y0 + 1; dy <= y0 + 2; dy++) {
+                ow.setBlockState(new BlockPos(wx + dx, dy, wz - 3), Blocks.GLASS.getDefaultState(), 3);
+                ow.setBlockState(new BlockPos(wx + dx, dy, wz + 3), Blocks.GLASS.getDefaultState(), 3);
+            }
+        }
+        for (int dz = -3; dz <= 3; dz++) {
+            for (int dy = y0 + 1; dy <= y0 + 2; dy++) {
+                ow.setBlockState(new BlockPos(wx - 3, dy, wz + dz), Blocks.GLASS.getDefaultState(), 3);
+                ow.setBlockState(new BlockPos(wx + 3, dy, wz + dz), Blocks.GLASS.getDefaultState(), 3);
+            }
+        }
+        lobbyWaitPos = new BlockPos(wx, y0, wz);
+        LOGGER.info("[StructureRace] 进服等待点已就绪：主世界出生点地底 ({}, {}, {})", wx, y0, wz);
+    }
+
+    /** 传送玩家到等待点（站立于 y=-64 地板上方），并确保等待点已生成 */
+    private static void teleportToWaitPoint(ServerPlayerEntity player) {
+        ServerWorld ow = player.getServer().getOverworld();
+        prepareLobbyWaitPoint(player.getServer());
+        BlockPos w = lobbyWaitPos;
+        if (w == null) {
+            PlayerState ps = PLAYER_STATES.get(player.getUuid());
+            if (ps != null) ps.pendingLobby = false;
+            teleportToLobby(player);
+            return;
+        }
+        player.teleport(ow, w.getX() + 0.5, w.getY() + 1, w.getZ() + 0.5,
+                player.getYaw(), player.getPitch());
+        // 等待期间死亡重生点也设在等待区，避免意外死亡后掉出
+        player.setSpawnPoint(World.OVERWORLD, w, 0.0f, true, false);
+    }
+
+    /** 给予无限时长饱和（大厅 / 等待点使用，开赛时移除） */
+    private static void giveSaturation(ServerPlayerEntity player) {
+        player.addStatusEffect(new StatusEffectInstance(StatusEffects.SATURATION, -1, 0, false, true, true));
+    }
+
     // ==================== 大厅装备（选队指南针 + 规则书） ====================
 
     /** 准备阶段：确保玩家持有选队指南针与规则书，且为冒险模式（防丢：每 2 秒补发一次） */
     private static void ensureLobbyGear(ServerPlayerEntity player) {
         if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) return;
+        giveSaturation(player); // 大厅玩家保持饱和（不饥饿）
         PlayerInventory inv = player.getInventory();
         boolean hasCompass = false;
         boolean hasBook = false;
@@ -630,11 +777,25 @@ public final class StructureRaceEvents {
         }
     }
 
-    /** 打开「积分映射书」：结构分值 + 群系分值 + 其他积分规则 */
+    /** 打开「积分映射书」：目录 + 结构分值 + 群系分值 + 其他积分规则 */
     public static void openPointBook(ServerPlayerEntity player) {
         List<String> pages = new ArrayList<>();
+        pages.add("§l§n积分映射·目录§r\n"
+                + "§l① 结构分值§r 下一页\n"
+                + "§l② 群系分值§r 其后\n"
+                + "§l③ 其他积分§r 最后\n"
+                + "§l【结构规则】§r\n"
+                + "发现即加分，同队不\n"
+                + "重复；结构被任意队\n"
+                + "伍发现即占有，\n"
+                + "先到先得。\n"
+                + "§l【群系规则】§r\n"
+                + "首次踏入加分，群系\n"
+                + "不占有，各队可\n"
+                + "分别获得；已探索\n"
+                + "群系不再加分。");
         // 结构分值
-        StringBuilder sb = new StringBuilder("§l§n结构积分映射§r\n");
+        StringBuilder sb = new StringBuilder("§l① 结构分值§r\n");
         int count = 0;
         for (RegistryKey<Structure> key : StructureRaceConfig.STRUCTURE_SCORES.keySet()) {
             int score = StructureRaceConfig.STRUCTURE_SCORES.get(key);
@@ -642,14 +803,14 @@ public final class StructureRaceEvents {
                     key.getValue().getPath(), key.getValue().getPath());
             if (count > 0 && count % 12 == 0) {
                 pages.add(sb.toString());
-                sb = new StringBuilder("§l§n结构积分映射(续)§r\n");
+                sb = new StringBuilder("§l① 结构分值(续)§r\n");
             }
             sb.append(name).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
         // 群系分值
-        sb = new StringBuilder("§l§n群系积分映射§r\n");
+        sb = new StringBuilder("§l② 群系分值§r\n");
         count = 0;
         for (RegistryKey<Biome> key : StructureRaceConfig.BIOME_SCORES.keySet()) {
             int score = StructureRaceConfig.BIOME_SCORES.get(key);
@@ -657,14 +818,14 @@ public final class StructureRaceEvents {
                     key.getValue().toString(), key.getValue().getPath());
             if (count > 0 && count % 12 == 0) {
                 pages.add(sb.toString());
-                sb = new StringBuilder("§l§n群系积分映射(续)§r\n");
+                sb = new StringBuilder("§l② 群系分值(续)§r\n");
             }
             sb.append(name).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
         // 其他积分规则
-        sb = new StringBuilder("§l§n其他积分规则§r\n");
+        sb = new StringBuilder("§l③ 其他积分规则§r\n");
         sb.append("里程：每500格+1分\n坐船行驶不计\n\n");
         sb.append("击杀：每10只敌对怪物\n+1分（含远程击杀）\n\n");
         sb.append("维度：首次进入下界+10\n首次进入末地+20\n（每队各一次）\n\n");
@@ -673,24 +834,27 @@ public final class StructureRaceEvents {
         openInfoBook(player, "积分映射", pages);
     }
 
-    /** 打开「进度书」：总分、已找到结构及数量、已探索/未找到的可加分群系 */
+    /** 打开「进度书」：本队摘要 + 已发现结构及数量 + 已探索/未找到的可加分群系 */
     public static void openProgressBook(ServerPlayerEntity player) {
         StructureRaceState state = StructureRaceState.get(player.getServer().getOverworld());
         StructureRaceState.TeamData team = state.getTeamByMember(player.getUuid());
         List<String> pages = new ArrayList<>();
         if (team == null) {
-            pages.add("§l§n竞速进度§r\n\n你尚未加入任何队伍。\n加入队伍后才能查看\n本队的探索进度。\n\n可用 §1/race join <颜色>§r\n或右键指南针组队。");
+            pages.add("§l§n竞速进度§r\n\n你尚未加入任何队伍。\n加入队伍后才能查看\n本队的探索进度。\n\n可用 §1/race join <颜色>§r\n或右键指南针组队。\n\n§7按 §1U§r 键可刷新本页");
             openInfoBook(player, "竞速进度", pages);
             return;
         }
-        String teamZh = StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(team.teamId, team.teamId);
+        String teamZh = teamColorCode(team.teamId) + teamZhName(team.teamId) + "§r";
         // 已找到结构及数量
         Map<String, Integer> structCount = new HashMap<>();
         for (String uniqueId : team.discoveredStructures) {
             structCount.merge(extractRegistryName(uniqueId), 1, Integer::sum);
         }
-        StringBuilder sb = new StringBuilder("§l§n" + teamZh + " 探索进度§r\n\n");
-        sb.append("总分：§l").append(team.totalScore).append("§r\n\n");
+        StringBuilder sb = new StringBuilder("§l§n" + teamZh + " 探索进度§r\n");
+        sb.append("总分：§l").append(team.totalScore).append("§r\n");
+        sb.append("队员：§f").append(team.members.size()).append("§r 人\n");
+        sb.append("已发现结构：§6").append(team.discoveredStructures.size()).append("§r 个\n");
+        sb.append("已探索群系：§6").append(team.discoveredBiomes.size()).append("§r 个\n\n");
         sb.append("§l【已发现结构】§r\n");
         if (structCount.isEmpty()) {
             sb.append("（暂无）\n");
@@ -753,13 +917,13 @@ public final class StructureRaceEvents {
         }
 
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
-        List<String> zhNames = new ArrayList<>();
+        List<String> coloredNames = new ArrayList<>();
         for (String id : winnerTeamIds) {
-            zhNames.add(StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(id, id));
+            coloredNames.add(teamColorCode(id) + teamZhName(id) + "§r");
         }
         String winnerText = tie
-                ? "平局！" + String.join("、", zhNames) + " 并列第一"
-                : zhNames.get(0) + " 获得胜利！";
+                ? "平局！" + String.join("、", coloredNames) + " 并列第一"
+                : coloredNames.get(0) + " 获得胜利！";
 
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             StructureRaceState.TeamData pTeam = state.getTeamByMember(p.getUuid());
@@ -835,6 +999,23 @@ public final class StructureRaceEvents {
 
     // ==================== 聊天消息系统 ====================
 
+    /** 队伍 ID → 颜色代码（如 "§c"），未知队伍用白色 */
+    private static String teamColorCode(String teamId) {
+        Formatting f = StructureRaceConfig.TEAM_FORMATTING.get(teamId);
+        return f != null ? f.toString() : "§f";
+    }
+
+    /** 队伍 ID → 中文队名 */
+    private static String teamZhName(String teamId) {
+        return StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(teamId, teamId);
+    }
+
+    /** 玩家显示名：带其队伍颜色（无队伍/观众为白色） */
+    private static String playerDisplayName(ServerPlayerEntity sender, StructureRaceState state) {
+        StructureRaceState.TeamData t = state.getTeamByMember(sender.getUuid());
+        return (t != null ? teamColorCode(t.teamId) : "§f") + sender.getEntityName() + "§r";
+    }
+
     /**
      * 聊天消息拦截（仅比赛进行中生效）：
      * <ul>
@@ -860,12 +1041,13 @@ public final class StructureRaceEvents {
         if (global) {
             // 全局消息：所有人可见
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§f[全局] §r§a" + sender.getEntityName() + "§7: §r" + display);
+                    + "§f[全局] §r" + playerDisplayName(sender, state) + "§7: §r" + display);
             sender.getServer().getPlayerManager().broadcast(msg, false);
         } else if (team != null) {
-            // 队聊：仅同队玩家可见
+            // 队聊：仅同队玩家可见，前缀与玩家名均使用队伍颜色 + 中文队名
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§7[队聊·" + team.teamId + "] §r§a" + sender.getEntityName() + "§7: §r" + display);
+                    + teamColorCode(team.teamId) + "[队聊·" + teamZhName(team.teamId) + "] §r"
+                    + playerDisplayName(sender, state) + "§7: §r" + display);
             for (ServerPlayerEntity p : sender.getServer().getPlayerManager().getPlayerList()) {
                 StructureRaceState.TeamData pTeam = state.getTeamByMember(p.getUuid());
                 if (pTeam != null && pTeam.teamId.equals(team.teamId)) {
@@ -875,7 +1057,7 @@ public final class StructureRaceEvents {
         } else {
             // 观众（无队伍）：按全局发送
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§7[观众] §r§a" + sender.getEntityName() + "§7: §r" + display);
+                    + "§7[观众] §r" + playerDisplayName(sender, state) + "§7: §r" + display);
             sender.getServer().getPlayerManager().broadcast(msg, false);
         }
         return false; // 取消默认广播，使用自定义分发
@@ -1034,9 +1216,11 @@ public final class StructureRaceEvents {
         if (state == null || state.won) return;
 
         long gameTime = player.getServerWorld().getTime();
-        // 5 分钟内有过任何得分则不提示
-        if (gameTime - state.lastFindTime < FIND_TIMEOUT_TICKS) return;
-        // 距离过近（≤100 格）后，1 分钟后再查询
+        // 个人计时：距上次发现（或上次提示后的虚拟时间）不足 3 分钟则不提示。
+        // 提示时会把 lastFindTime 移到「now + 7 分钟」，从而同时实现「提示后 7 分钟冷却 +
+        // 冷却结束后重新开始 3 分钟计时」；开局 lastFindTime=开赛时刻，无开局冷却。
+        if (gameTime - state.lastFindTime < HINT_NO_FIND_TICKS) return;
+        // 距离过近（≤100 格）后，1 分钟后再查询（节流，避免高频 locate）
         if (gameTime - state.lastHintTime < StructureRaceConfig.HINT_RETRY_TICKS) return;
         state.lastHintTime = gameTime;
 
@@ -1054,16 +1238,16 @@ public final class StructureRaceEvents {
                 return;
             }
 
-            // 全局冷却，避免多玩家/短时间刷屏
-            if (gameTime - lastGlobalGuideTime < GUIDE_GLOBAL_COOLDOWN_TICKS) return;
-            lastGlobalGuideTime = gameTime;
-            state.lastFindTime = gameTime; // 提示后重置超时计时
+            // 给出指引：进入 7 分钟个人冷却（把 lastFindTime 移到未来），并持久化
+            state.lastFindTime = gameTime + HINT_COOLDOWN_TICKS;
+            saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
+            saveState.markDirty();
 
             if (nearest == null) {
                 // 检索半径内没有结构
                 player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
                         + "§e周围 " + StructureRaceConfig.HINT_SEARCH_RADIUS
-                        + " 格内暂未发现竞速结构，继续探索吧！"), false);
+                        + " 格内暂未发现竞速结构，继续探索吧！§7（下次提示需 7 分钟后）§r"), false);
                 return;
             }
 
@@ -1071,7 +1255,7 @@ public final class StructureRaceEvents {
             player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
                     + "§e最近的竞速结构在 §6(" + nearest.getX() + ", " + nearest.getZ()
                     + ")§r，距离 §6" + (int) dist + "§r 格（坐标 X=" + nearest.getX()
-                    + " Z=" + nearest.getZ() + "），快去探索吧！"), false);
+                    + " Z=" + nearest.getZ() + "），快去探索吧！§7（下次提示需 7 分钟后）§r"), false);
         } catch (Exception e) {
             LOGGER.warn("[StructureRace] 指引查询失败: {}", e.getMessage());
         }
@@ -1296,7 +1480,8 @@ public final class StructureRaceEvents {
 
     // ==================== 比赛控制（供 /race 命令调用） ====================
 
-    /** 开始新一局比赛；若比赛已在进行中则拒绝（返回 false），避免重复启动重置玩家状态 */
+    /** 开始新一局比赛；若比赛已在进行中则拒绝（返回 false），避免重复启动重置玩家状态。
+     * 进入 5 秒开赛倒计时（title 逐秒提示），倒计时结束后才真正传送/清背包/开赛。 */
     public static boolean startMatch(MinecraftServer server) {
         ServerWorld overworld = server.getOverworld();
         StructureRaceState state = StructureRaceState.get(overworld);
@@ -1306,7 +1491,7 @@ public final class StructureRaceEvents {
         }
         state.resetAllPlayers();
         state.matchActive = true;
-        state.matchStartTick = overworld.getTime();
+        state.matchStartTick = overworld.getTime(); // 先记录倒计时起点；正式开赛时由 executeMatchStart 重新记录
         for (StructureRaceState.TeamData t : state.getAllTeams().values()) {
             t.totalScore = 0;
             t.discoveredStructures.clear();
@@ -1321,33 +1506,74 @@ public final class StructureRaceEvents {
         PLAYER_STATES.clear();
         SCORE_LOG.clear(); // 新一局，清空上局得分记录
         lastAnnouncedSeconds = -1;
-        lastGlobalGuideTime = -GUIDE_GLOBAL_COOLDOWN_TICKS;
         pendingEndTicks = -1;
         pendingEndServer = null;
         cachedMatchActive = true;
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
 
-        // 所有玩家从大厅传送到主世界出生点；清空背包；有队伍 = 生存参赛，无队伍 = 旁观者观战
-        BlockPos spawnPos = overworld.getSpawnPos();
-        // 预生成主世界出生点所在区块（以及周边一圈），避免跨维度传送后客户端看不到任何地形/实体
-        overworld.getChunk(spawnPos.getX() >> 4, spawnPos.getZ() >> 4, net.minecraft.world.chunk.ChunkStatus.FULL, true);
+        // 进入 5 秒开赛倒计时（倒计时结束才执行 executeMatchStart）
+        preStartCountdownTicks = StructureRaceConfig.START_COUNTDOWN_TICKS;
+        lastCountdownSecond = -1;
+
+        // 为所有在线玩家重建竞速状态（队伍颜色/计分板）；倒计时阶段观众暂不传送
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            player.getInventory().clear(); // 比赛开始清空背包，防止携带大厅物品/作弊物品
-            player.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
-                    spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
-            // 重生点改为主世界（比赛期间死亡不回到大厅）
-            player.setSpawnPoint(World.OVERWORLD, spawnPos, 0.0f, true, false);
-            if (state.getTeamByMember(player.getUuid()) != null) {
-                player.changeGameMode(GameMode.SURVIVAL);
-            } else {
-                player.changeGameMode(GameMode.SPECTATOR);
+            onPlayerSpawn(player, false);
+        }
+
+        server.getPlayerManager().broadcast(Text.literal(
+                StructureRaceConfig.BROADCAST_PREFIX
+                        + "§e🏁 比赛即将开始！§r5 秒后传送至主世界！"), false);
+        LOGGER.info("[StructureRace] 新一局比赛进入开赛倒计时，模式: {}", state.winCondition);
+        return true;
+    }
+
+    /** 倒计时结束后的正式开赛：时间重置白天、传送主世界出生点、清背包、切模式、移除饱和、初始化指引计时 */
+    private static void executeMatchStart(MinecraftServer server) {
+        StructureRaceState state = StructureRaceState.get(server.getOverworld());
+        ServerWorld overworld = server.getOverworld();
+        BlockPos spawnPos = overworld.getSpawnPos();
+        // 预生成主世界出生点所在区块，避免跨维度传送后客户端看不到任何地形/实体
+        overworld.getChunk(spawnPos.getX() >> 4, spawnPos.getZ() >> 4,
+                net.minecraft.world.chunk.ChunkStatus.FULL, true);
+        // 时间重置为白天（time set 0）
+        overworld.setTimeOfDay(0);
+        long now = overworld.getTime();
+        // 真正开赛才记录起始时刻（倒计时不计入限时）
+        state.matchStartTick = now;
+        state.markDirty();
+
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            try {
+                player.getInventory().clear(); // 比赛开始清空背包，防止携带大厅物品/作弊物品
+                player.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
+                        spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
+                // 重生点改为主世界（比赛期间死亡不回到大厅）
+                player.setSpawnPoint(World.OVERWORLD, spawnPos, 0.0f, true, false);
+                if (state.getTeamByMember(player.getUuid()) != null) {
+                    player.changeGameMode(GameMode.SURVIVAL);
+                } else {
+                    player.changeGameMode(GameMode.SPECTATOR);
+                }
+                player.removeStatusEffect(StatusEffects.SATURATION); // 开赛移除大厅饱和
+                // 个人迷路指引：开局归零（无开局冷却），3 分钟无发现即提示
+                PlayerState ps = PLAYER_STATES.get(player.getUuid());
+                if (ps != null) {
+                    ps.pendingLobby = false;
+                    ps.joinTicks = 0;
+                    ps.lastFindTime = now;
+                }
+                StructureRaceState.PlayerPersistentData pd = state.getPlayerData(player.getUuid());
+                pd.lastFindTime = now;
+            } catch (Exception e) {
+                LOGGER.warn("[StructureRace] 开赛处理玩家 {} 失败: {}", player.getEntityName(), e.getMessage());
             }
         }
+        state.markDirty();
 
         // 为所有在线玩家重建竞速状态（模拟 JOIN 初始化）
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            onPlayerSpawn(player);
+            onPlayerSpawn(player, false);
         }
 
         // 未加入任何队伍的玩家设为旁观者模式（观众）
@@ -1363,8 +1589,10 @@ public final class StructureRaceEvents {
                 : "率先达到 " + state.winScore + " 分者获胜！";
         server.getPlayerManager().broadcast(Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX + "§e🏁 比赛开始！§r" + modeMsg), false);
-        LOGGER.info("[StructureRace] 新一局比赛开始，模式: {}", state.winCondition);
-        return true;
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            sendTitle(p, "§a§l比赛开始！", "§r" + modeMsg, 10, 60, 10);
+        }
+        LOGGER.info("[StructureRace] 新一局比赛正式开始，模式: {}", state.winCondition);
     }
 
     public static void stopMatch(MinecraftServer server) {
@@ -1372,6 +1600,8 @@ public final class StructureRaceEvents {
         state.matchActive = false;
         state.markDirty();
         cachedMatchActive = false;
+        preStartCountdownTicks = -1;
+        lastCountdownSecond = -1;
         server.getPlayerManager().broadcast(Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX + "§c比赛已停止，暂停计分。§r"), false);
     }
@@ -1407,6 +1637,8 @@ public final class StructureRaceEvents {
         SCORE_LOG.clear(); // 兜底清空
         pendingEndTicks = -1;
         pendingEndServer = null;
+        preStartCountdownTicks = -1;
+        lastCountdownSecond = -1;
         cachedMatchActive = false;
         // 队伍分数已归零，刷新队伍计分板（无成员队伍不显示）
         refreshAllTeamScoreboards(server);
@@ -1766,9 +1998,11 @@ public final class StructureRaceEvents {
                                         String reason, int earned, int total) {
         SCORE_LOG.add(new ScoreLogEntry(player.server.getOverworld().getTime(),
                 player.getEntityName(), team.teamId, reason, earned, total));
+        StructureRaceState state = StructureRaceState.get(player.server.getOverworld());
         Text message = Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX
-                        + "§c[" + team.teamId + "]§r §a" + player.getName().getString()
+                        + teamColorCode(team.teamId) + "[" + teamZhName(team.teamId) + "]§r "
+                        + playerDisplayName(player, state)
                         + " §r获得 §6+" + earned + "§r 分（" + reason
                         + "），队伍累计 §6" + total + "§r 分");
         player.server.getPlayerManager().broadcast(message, false);
@@ -1841,12 +2075,14 @@ public final class StructureRaceEvents {
         private int totalScore;
         private long lastScoreGameTime;
         private long lastBiomeCheckTime;
-        private long lastFindTime; // 机制6：上次任何加分的时间
+        private long lastFindTime; // 机制6：上次发现时间；提示后为「now + 7分钟」的未来值（实现个人冷却）
         private long lastHintTime; // 机制6：上次迷路指引查询时间（用于过近时 1 分钟重试）
         private boolean won;
         private BlockPos lastDistancePos; // 机制1
         private double distanceAccumulator; // 机制1
         private int killCount; // 机制2
         private String lastDimension; // 机制4：上次所在维度
+        private boolean pendingLobby; // 进服等待加载中（在主世界地底等待点）
+        private int joinTicks; // 进服等待累计 tick
     }
 }
