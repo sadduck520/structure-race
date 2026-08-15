@@ -5,9 +5,9 @@
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 > A team-based exploration racing mod for **Minecraft 1.20.1 (Fabric)**.
-> Form teams of up to 8 colors in a void lobby, then race to discover **structures** and **rare biomes** in the overworld to earn points for your team. First to reach the target score — or the highest score when time runs out — wins!
+> Form teams of up to 8 colors in lobby, then race to discover **structures** and **rare biomes** in the overworld to earn points for your team. First to reach the target score — or the highest score when time runs out — wins!
 
-> 一个基于 **Minecraft 1.20.1（Fabric）** 的团队竞速探索模组。玩家在独立虚空大厅中组成 8 色队伍后进入世界竞速，通过发现**结构**与**稀有群系**、跑图、击杀等方式为队伍赚取积分，率先达到目标分数或时间结束时积分最高者获胜！
+> 一个基于 **Minecraft 1.20.1（Fabric）** 的团队竞速探索模组。玩家可组队进入世界竞速，通过发现**结构**与**稀有群系**、跑图、击杀等方式为队伍赚取积分，率先达到目标分数或时间结束时积分最高者获胜！
 
 ---
 
@@ -48,11 +48,81 @@
 | 维度 | 队伍首次进入下界 / 末地 | +10 / +20 |
 | 林地府邸 | 携带探险家地图 / 无地图 | +50 / +30 |
 
-### 结构分值（部分）
-远古城市 25 · 堡垒遗迹 18 · 林地府邸 30/50 · 末地城 40 · 下界堡垒 15 · 要塞 30 · 沙漠神殿 8 · 雪屋 12 · 女巫小屋 12 · 掠夺者前哨站 8 · 丛林神庙 12 · 古迹废墟 12 · 废弃矿井 10 · 海底神殿 10 · 沉船 3/4 · 村庄 5 …（完整列表按 `P` 键查看）
+### 结构分值 / Structure Points（完整）
 
-### 群系分值（部分）
-蘑菇岛 20 · 深暗之域 15 · 冰刺之地 8 · 沼泽 5 · 竹林 5 · 红树林 5 · 恶地 5 · 沙漠 5 · 丛林 4 · 樱花树林 4 · 黑森林 3 · 草甸 3 …（完整列表按 `P` 键查看）
+| 中文 | English | 分值 |
+|---|---|---|
+| 远古城市 | Ancient City | 25 |
+| 堡垒遗迹 | Bastion Remnant | 18 |
+| 林地府邸（有地图/无地图） | Woodland Mansion (w/ map / w/o) | 50 / 30 |
+| 末地城 | End City | 40 |
+| 要塞 | Stronghold | 30 |
+| 下界堡垒 | Nether Fortress | 15 |
+| 雪屋 | Igloo | 12 |
+| 女巫小屋 | Witch Hut | 12 |
+| 丛林神庙 | Jungle Pyramid | 12 |
+| 古迹废墟 | Trail Ruins | 12 |
+| 废弃矿井 | Mineshaft | 10 |
+| 海底神殿 | Ocean Monument | 10 |
+| 沙漠神殿 | Desert Pyramid | 8 |
+| 掠夺者前哨站 | Pillager Outpost | 8 |
+| 废弃矿井(恶地) | Mineshaft (Mesa) | 6 |
+| 埋藏的宝藏 | Buried Treasure | 6 |
+| 村庄(平原) | Plains Village | 5 |
+| 村庄(沙漠) | Desert Village | 5 |
+| 村庄(热带草原) | Savanna Village | 5 |
+| 村庄(雪原) | Snowy Village | 5 |
+| 村庄(针叶林) | Taiga Village | 5 |
+| 沉船(搁浅) | Shipwreck (Beached) | 4 |
+| 破损传送门 | Ruined Portal | 3 |
+| 破损传送门(沙漠) | Ruined Portal (Desert) | 3 |
+| 破损传送门(丛林) | Ruined Portal (Jungle) | 3 |
+| 破损传送门(山地) | Ruined Portal (Mountain) | 3 |
+| 破损传送门(下界) | Ruined Portal (Nether) | 3 |
+| 破损传送门(海洋) | Ruined Portal (Ocean) | 3 |
+| 破损传送门(沼泽) | Ruined Portal (Swamp) | 3 |
+| 沉船 | Shipwreck | 3 |
+| 海底废墟(寒带) | Ocean Ruin (Cold) | 3 |
+| 海底废墟(热带) | Ocean Ruin (Warm) | 3 |
+| 下界化石 | Nether Fossil | 1 |
+
+### 群系分值 / Biome Points（完整）
+
+| 中文 | English | 分值 |
+|---|---|---|
+| 蘑菇岛 | Mushroom Fields | 20 |
+| 深暗之域 | Deep Dark | 15 |
+| 冰刺之地 | Ice Spikes | 8 |
+| 冰封山峰 | Frozen Peaks | 6 |
+| 尖峭山峰 | Jagged Peaks | 6 |
+| 沼泽 | Swamp | 5 |
+| 沙漠 | Desert | 5 |
+| 竹林 | Bamboo Jungle | 5 |
+| 恶地 | Badlands | 5 |
+| 被风蚀的恶地 | Eroded Badlands | 5 |
+| 繁茂恶地 | Wooded Badlands | 5 |
+| 红树林沼泽 | Mangrove Swamp | 5 |
+| 溶洞 | Dripstone Caves | 5 |
+| 裸岩山峰 | Stony Peaks | 5 |
+| 丛林 | Jungle | 4 |
+| 樱花树林 | Cherry Grove | 4 |
+| 繁茂洞穴 | Lush Caves | 4 |
+| 雪坡 | Snowy Slopes | 4 |
+| 雪林 | Grove | 4 |
+| 繁花森林 | Flower Forest | 4 |
+| 风袭森林 | Windswept Forest | 4 |
+| 风袭砾质丘陵 | Windswept Gravelly Hills | 4 |
+| 风袭丘陵 | Windswept Hills | 4 |
+| 风袭热带草原 | Windswept Savanna | 4 |
+| 积雪平原 | Snowy Plains | 4 |
+| 积雪针叶林 | Snowy Taiga | 4 |
+| 稀疏丛林 | Sparse Jungle | 3 |
+| 黑森林 | Dark Forest | 3 |
+| 草甸 | Meadow | 3 |
+| 原始桦木森林 | Old Birch Forest | 3 |
+| 原始松木针叶林 | Old Pine Taiga | 3 |
+| 原始云杉针叶林 | Old Spruce Taiga | 3 |
+| 积雪沙滩 | Snowy Beach | 2 |
 
 ---
 
@@ -110,7 +180,7 @@
 ## 📥 Installation / 安装
 
 1. 安装 [Fabric Loader](https://fabricmc.net/use/)（≥ 0.15.11）与 [Fabric API](https://modrinth.com/mod/fabric-api)（0.92.0+1.20.1）；
-2. 将 `structure_race_v2-2.7.2.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
+2. 将 `structure_race_v2-2.8.0.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
 3. 启动游戏，进入任意存档即可开始。
 
 ---
@@ -162,6 +232,6 @@ src/main/resources/data/structure_race/       # lobby 维度与结构 tag
 
 ## 🤝 License / 开源协议
 
-[MIT](LICENSE) © 2026 YourName
+[MIT](LICENSE) © 2026 sadduck520
 
 欢迎提交 Issue 与 Pull Request！🚀
