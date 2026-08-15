@@ -54,7 +54,7 @@ public final class StructureRaceConfig {
     public static final String SCOREBOARD_OBJECTIVE_NAME = "race_score";
 
     /** 计分板显示名称（Sidebar 顶部标题） */
-    public static final String SCOREBOARD_DISPLAY_NAME = "§6Structure Race V2§r";
+    public static final String SCOREBOARD_DISPLAY_NAME = "§6Structure Race / 结构竞速§r";
 
     // ==================== 检测参数 ====================
 
@@ -98,6 +98,22 @@ public final class StructureRaceConfig {
         m.put("white", "白队");
         m.put("black", "黑队");
         m.put("purple", "紫队");
+        return Collections.unmodifiableMap(m);
+    }
+
+    /** 队伍 ID → 英文队名 */
+    public static final Map<String, String> TEAM_NAMES_EN = createTeamEnNames();
+
+    private static Map<String, String> createTeamEnNames() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("red", "Red");
+        m.put("blue", "Blue");
+        m.put("yellow", "Yellow");
+        m.put("orange", "Orange");
+        m.put("green", "Green");
+        m.put("white", "White");
+        m.put("black", "Black");
+        m.put("purple", "Purple");
         return Collections.unmodifiableMap(m);
     }
 
@@ -157,6 +173,47 @@ public final class StructureRaceConfig {
         return m;
     }
 
+    /** 结构注册名 → 英文名（供英文版进度/积分书显示） */
+    public static final java.util.Map<String, String> STRUCTURE_NAMES_EN = createStructureNamesEn();
+
+    private static java.util.Map<String, String> createStructureNamesEn() {
+        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+        m.put("ancient_city", "Ancient City");
+        m.put("bastion_remnant", "Bastion Remnant");
+        m.put("buried_treasure", "Buried Treasure");
+        m.put("desert_pyramid", "Desert Pyramid");
+        m.put("end_city", "End City");
+        m.put("fortress", "Nether Fortress");
+        m.put("igloo", "Igloo");
+        m.put("jungle_pyramid", "Jungle Pyramid");
+        m.put("mansion", "Woodland Mansion");
+        m.put("mineshaft", "Mineshaft");
+        m.put("mineshaft_mesa", "Mineshaft (Mesa)");
+        m.put("monument", "Ocean Monument");
+        m.put("nether_fossil", "Nether Fossil");
+        m.put("ocean_ruin_cold", "Ocean Ruin (Cold)");
+        m.put("ocean_ruin_warm", "Ocean Ruin (Warm)");
+        m.put("pillager_outpost", "Pillager Outpost");
+        m.put("ruined_portal", "Ruined Portal");
+        m.put("ruined_portal_desert", "Ruined Portal (Desert)");
+        m.put("ruined_portal_jungle", "Ruined Portal (Jungle)");
+        m.put("ruined_portal_mountain", "Ruined Portal (Mountain)");
+        m.put("ruined_portal_nether", "Ruined Portal (Nether)");
+        m.put("ruined_portal_ocean", "Ruined Portal (Ocean)");
+        m.put("ruined_portal_swamp", "Ruined Portal (Swamp)");
+        m.put("shipwreck", "Shipwreck");
+        m.put("shipwreck_beached", "Shipwreck (Beached)");
+        m.put("stronghold", "Stronghold");
+        m.put("swamp_hut", "Witch Hut");
+        m.put("trail_ruins", "Trail Ruins");
+        m.put("village_desert", "Desert Village");
+        m.put("village_plains", "Plains Village");
+        m.put("village_savanna", "Savanna Village");
+        m.put("village_snowy", "Snowy Village");
+        m.put("village_taiga", "Taiga Village");
+        return m;
+    }
+
     /** 群系注册名 → 中文名（key 含 minecraft: 前缀，与查询用的 biomeId 格式一致） */
     public static final Map<String, String> BIOME_NAMES = createBiomeNames();
 
@@ -195,6 +252,47 @@ public final class StructureRaceConfig {
         m.put("minecraft:snowy_plains", "积雪平原");
         m.put("minecraft:snowy_taiga", "积雪针叶林");
         m.put("minecraft:snowy_beach", "积雪沙滩");
+        return m;
+    }
+
+    /** 群系注册名 → 英文名（供英文版进度/积分书显示） */
+    public static final Map<String, String> BIOME_NAMES_EN = createBiomeNamesEn();
+
+    private static Map<String, String> createBiomeNamesEn() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("minecraft:swamp", "Swamp");
+        m.put("minecraft:desert", "Desert");
+        m.put("minecraft:jungle", "Jungle");
+        m.put("minecraft:bamboo_jungle", "Bamboo Jungle");
+        m.put("minecraft:sparse_jungle", "Sparse Jungle");
+        m.put("minecraft:badlands", "Badlands");
+        m.put("minecraft:eroded_badlands", "Eroded Badlands");
+        m.put("minecraft:wooded_badlands", "Wooded Badlands");
+        m.put("minecraft:mushroom_fields", "Mushroom Fields");
+        m.put("minecraft:ice_spikes", "Ice Spikes");
+        m.put("minecraft:mangrove_swamp", "Mangrove Swamp");
+        m.put("minecraft:cherry_grove", "Cherry Grove");
+        m.put("minecraft:dark_forest", "Dark Forest");
+        m.put("minecraft:deep_dark", "Deep Dark");
+        m.put("minecraft:dripstone_caves", "Dripstone Caves");
+        m.put("minecraft:lush_caves", "Lush Caves");
+        m.put("minecraft:frozen_peaks", "Frozen Peaks");
+        m.put("minecraft:jagged_peaks", "Jagged Peaks");
+        m.put("minecraft:stony_peaks", "Stony Peaks");
+        m.put("minecraft:snowy_slopes", "Snowy Slopes");
+        m.put("minecraft:grove", "Grove");
+        m.put("minecraft:meadow", "Meadow");
+        m.put("minecraft:flower_forest", "Flower Forest");
+        m.put("minecraft:old_growth_birch_forest", "Old Birch Forest");
+        m.put("minecraft:old_growth_pine_taiga", "Old Pine Taiga");
+        m.put("minecraft:old_growth_spruce_taiga", "Old Spruce Taiga");
+        m.put("minecraft:windswept_forest", "Windswept Forest");
+        m.put("minecraft:windswept_gravelly_hills", "Windswept Gravelly Hills");
+        m.put("minecraft:windswept_hills", "Windswept Hills");
+        m.put("minecraft:windswept_savanna", "Windswept Savanna");
+        m.put("minecraft:snowy_plains", "Snowy Plains");
+        m.put("minecraft:snowy_taiga", "Snowy Taiga");
+        m.put("minecraft:snowy_beach", "Snowy Beach");
         return m;
     }
 
@@ -347,10 +445,15 @@ public final class StructureRaceConfig {
     /** /race start 后开赛倒计时（tick，5 秒），倒计时结束后才传送/清背包/开赛 */
     public static final int START_COUNTDOWN_TICKS = 100;
 
-    /** 规则书页面内容（玩法/规则/指令/积分关系）。
+    /** 规则书页面内容（玩法/规则/指令/积分关系）。按玩家语言返回中/英文版。
      * 书页为浅色底，统一使用深色文字；每页不超过 13 行、每行不超过 14 个全角字符，
      * 避免书页排版截断导致显示不全。含目录页，方便玩家按章节查阅。 */
-    public static java.util.List<String> getRuleBookPages() {
+    public static java.util.List<String> getRuleBookPages(String lang) {
+        return Lang.EN.equals(lang) ? getRuleBookPagesEn() : getRuleBookPagesZh();
+    }
+
+    /** 中文规则书页面 */
+    private static java.util.List<String> getRuleBookPagesZh() {
         java.util.List<String> pages = new java.util.ArrayList<>();
         pages.add("§l§n结构竞速·玩法指南§r\n"
                 + "§l欢迎来到结构竞速！§r\n"
@@ -486,6 +589,156 @@ public final class StructureRaceConfig {
                 + "沉船3/4 海底废墟3\n"
                 + "破损传送门3 村庄5\n"
                 + "下界化石1");
+        return pages;
+    }
+
+    /** 英文规则书页面 */
+    private static java.util.List<String> getRuleBookPagesEn() {
+        java.util.List<String> pages = new java.util.ArrayList<>();
+        pages.add("§l§nStructure Race - Guide§r\n"
+                + "Welcome to Structure Race!\n"
+                + "Teams explore and race to\n"
+                + "find structures and rare\n"
+                + "biomes to earn points.\n"
+                + "§l【Contents】§r\n"
+                + "1. Teams..........p.2\n"
+                + "2. Game Flow.......p.3\n"
+                + "3. Structure Pts...p.4\n"
+                + "4. Biome Pts.......p.5\n"
+                + "5. Other Points....p.6\n"
+                + "6. Commands........p.7\n"
+                + "7. Hotkeys.........p.8\n"
+                + "8. Mechanics.......p.9\n"
+                + "9. Win & Result....p.10\n"
+                + "10. Structure List.p.11");
+        pages.add("§l1. Teams§r\n"
+                + "Right-click the compass\n"
+                + "(team selector) to open\n"
+                + "the team GUI.\n"
+                + "Click a wool color to\n"
+                + "join that team. Click\n"
+                + "the barrier to become a\n"
+                + "spectator.\n"
+                + "§1/race join <color>§r\n"
+                + "red, blue, yellow, orange\n"
+                + "green, white, black, purple");
+        pages.add("§l2. Game Flow§r\n"
+                + "1. Form teams in lobby\n"
+                + "2. Admin runs §1/race start§r\n"
+                + "3. 5-sec countdown, then\n"
+                + "teleport to overworld\n"
+                + "spawn point\n"
+                + "4. Explore and score\n"
+                + "5. When it ends, results\n"
+                + "are shown; winners return\n"
+                + "to lobby in 10s with\n"
+                + "fireworks");
+        pages.add("§l3. Structure Points§r\n"
+                + "§l【Discover to score】§r\n"
+                + "First discovery of a\n"
+                + "target structure earns\n"
+                + "points for your team.\n"
+                + "§l【No repeat】§r\n"
+                + "The same structure does\n"
+                + "not score twice for a\n"
+                + "team.\n"
+                + "§l【First-come】§r\n"
+                + "Once claimed by a team,\n"
+                + "others get no points.\n"
+                + "First come, first served!");
+        pages.add("§l4. Biome Points§r\n"
+                + "§l【Rules】§r\n"
+                + "Entering a target biome\n"
+                + "for the first time earns\n"
+                + "points. Biomes are NOT\n"
+                + "first-come; every team\n"
+                + "can earn separately.\n"
+                + "Already explored biomes\n"
+                + "give no more points.\n"
+                + "§l【Values】§r\n"
+                + "Mushroom Fields 20\n"
+                + "Deep Dark 15, Ice Spikes 8\n"
+                + "Swamp 5, Bamboo Jungle 5\n"
+                + "Full list: §1/race point§r\n"
+                + "or press §1P§r");
+        pages.add("§l5. Other Points§r\n"
+                + "§l【Distance】§r\n"
+                + "Walk/fly every 500 blocks\n"
+                + "+1 (boats not counted)\n"
+                + "§l【Kills】§r\n"
+                + "Every 10 hostile mobs\n"
+                + "killed +1 (ranged ok)\n"
+                + "§l【Dimensions】§r\n"
+                + "Nether first time +10\n"
+                + "End first time +20\n"
+                + "§l【Mansion】§r\n"
+                + "With explorer map +50\n"
+                + "Without map +30");
+        pages.add("§l6. Commands§r\n"
+                + "§1/race join <color>§r\n"
+                + " join / switch team\n"
+                + "§1/race leave§r leave team\n"
+                + "§1/race time§r time left\n"
+                + "§1/race top§r rankings\n"
+                + "§1/race status§r status\n"
+                + "§1/race recall§r recall mate\n"
+                + " (costs 10 pts, 5 min cd)\n"
+                + "§1/race point§r point list\n"
+                + "§1/race progress§r progress\n"
+                + "§1/language§r change language");
+        pages.add("§l7. Hotkeys & Chat§r\n"
+                + "§1K§r guide book\n"
+                + "§1P§r point list\n"
+                + "§1U§r team progress\n"
+                + "§1L§r change language\n"
+                + "(rebindable in options)\n"
+                + "§l【Chat】§r\n"
+                + "During a match, normal\n"
+                + "chat is team-only.\n"
+                + "§1!§r prefix = global chat\n"
+                + "§l【Team lock】§r\n"
+                + "No team changes during\n"
+                + "a match; no team = spec");
+        pages.add("§l8. Mechanics§r\n"
+                + "§l【Comeback】§r\n"
+                + "20+ pts behind the\n"
+                + "leader: everyone gets\n"
+                + "Speed I\n"
+                + "§l【Lost guide】§r\n"
+                + "No discovery for 3 min\n"
+                + "auto-hints nearest\n"
+                + "structure coords.\n"
+                + "7 min cooldown after\n"
+                + "each hint.\n"
+                + "§l【Anti-cheat】§r\n"
+                + "Moves >50 blocks count\n"
+                + "as teleport (no points)");
+        pages.add("§l9. Win & Result§r\n"
+                + "§l【Score mode】§r\n"
+                + "First to reach target\n"
+                + "score (default 100) wins\n"
+                + "§l【Timer mode】§r\n"
+                + "Highest score when time\n"
+                + "runs out wins\n"
+                + "§1/race time§r for time left\n"
+                + "§l【Tie】§r\n"
+                + "Tied top score = draw\n"
+                + "§l【Result】§r\n"
+                + "Rankings shown; winners\n"
+                + "get a title; back to\n"
+                + "lobby in 10s + fireworks");
+        pages.add("§l10. Structure Points§r\n"
+                + "Ancient City 25, Bastion 18\n"
+                + "Mansion 30/50, End City 40\n"
+                + "Fortress 15, Stronghold 30\n"
+                + "Desert Pyramid 8, Igloo 12\n"
+                + "Witch Hut 12, Outpost 8\n"
+                + "Jungle Pyramid 12\n"
+                + "Trail Ruins 12, Mineshaft 10\n"
+                + "Mesa Mine 6, Monument 10\n"
+                + "Buried Treasure 6, Wreck 3/4\n"
+                + "Ocean Ruin 3, Ruined Portal 3\n"
+                + "Village 5, Nether Fossil 1");
         return pages;
     }
 }

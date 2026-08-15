@@ -68,6 +68,9 @@ public final class StructureRaceState extends PersistentState {
 
         /** 上次任何加分的时间（tick）（机制6，持久化避免重进重置） */
         public long lastFindTime;
+
+        /** 玩家选择的语言（"zh_cn"/"en_us"；null 表示默认中文） */
+        public String language;
     }
 
     // ==================== 全局去重（跨队伍独占） ====================
@@ -211,6 +214,9 @@ public final class StructureRaceState extends PersistentState {
             p.putBoolean("won", entry.getValue().won);
             p.putInt("killCount", entry.getValue().killCount);
             p.putLong("lastFindTime", entry.getValue().lastFindTime);
+            if (entry.getValue().language != null) {
+                p.putString("language", entry.getValue().language);
+            }
             p.put("structures", stringSetToNbt(entry.getValue().discoveredStructures));
             p.put("biomes", stringSetToNbt(entry.getValue().discoveredBiomes));
             players.add(p);
@@ -273,6 +279,8 @@ public final class StructureRaceState extends PersistentState {
                 d.won = p.getBoolean("won");
                 d.killCount = p.getInt("killCount");
                 d.lastFindTime = p.getLong("lastFindTime");
+                d.language = p.getString("language");
+                if (d.language.isEmpty()) d.language = null;
                 d.discoveredStructures.addAll(readStringSet(p, "structures"));
                 d.discoveredBiomes.addAll(readStringSet(p, "biomes"));
                 state.playerData.put(uuid, d);

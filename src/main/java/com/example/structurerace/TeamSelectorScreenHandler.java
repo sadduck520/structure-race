@@ -29,22 +29,22 @@ public final class TeamSelectorScreenHandler extends GenericContainerScreenHandl
     /** 队伍数量（固定 8 支） */
     public static final int TEAM_COUNT = 8;
 
-    /** 展示用容器（所有玩家共享，只读） */
-    private static final Inventory SELECTOR_INVENTORY = createSelectorInventory();
-
-    private TeamSelectorScreenHandler(int syncId, PlayerInventory playerInventory, PlayerEntity player) {
-        super(ScreenHandlerType.GENERIC_9X1, syncId, playerInventory, SELECTOR_INVENTORY, 1);
+    private TeamSelectorScreenHandler(int syncId, PlayerInventory playerInventory,
+                                      PlayerEntity player, ServerPlayerEntity owner) {
+        super(ScreenHandlerType.GENERIC_9X1, syncId, playerInventory, createSelectorInventory(owner), 1);
     }
 
-    /** 为玩家打开队伍选择界面 */
+    /** 为玩家打开队伍选择界面（物品名按玩家语言显示） */
     public static void open(ServerPlayerEntity player) {
         NamedScreenHandlerFactory factory = new SimpleNamedScreenHandlerFactory(
-                TeamSelectorScreenHandler::new, Text.literal("§6选择队伍 / 退出队伍"));
+                (syncId, inv, p) -> new TeamSelectorScreenHandler(syncId, inv, p, player),
+                Text.literal(Lang.get(player, "§6选择队伍 / 退出队伍", "§6Select Team / Leave Team")));
         player.openHandledScreen(factory);
     }
 
-    private static Inventory createSelectorInventory() {
+    private static Inventory createSelectorInventory(ServerPlayerEntity owner) {
         SimpleInventory inv = new SimpleInventory(9);
+        boolean en = Lang.isEn(owner);
         // 8 种羊毛，颜色与固定队伍一一对应
         ItemStack[] wools = {
                 new ItemStack(Items.RED_WOOL),
@@ -59,13 +59,15 @@ public final class TeamSelectorScreenHandler extends GenericContainerScreenHandl
         for (int i = 0; i < TEAM_COUNT; i++) {
             ItemStack stack = wools[i];
             String teamId = StructureRaceConfig.DEFAULT_TEAM_IDS.get(i);
-            stack.setCustomName(Text.literal(StructureRaceConfig.TEAM_FORMATTING.get(teamId)
-                    + StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(teamId, teamId)
-                    + "（点击加入）"));
+            String name = StructureRaceConfig.TEAM_FORMATTING.get(teamId)
+                    + (en ? StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(teamId, teamId)
+                          : StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(teamId, teamId))
+                    + (en ? " (click to join)" : "（点击加入）");
+            stack.setCustomName(Text.literal(name));
             inv.setStack(i, stack);
         }
         ItemStack leave = new ItemStack(Items.BARRIER);
-        leave.setCustomName(Text.literal("§c退出队伍 / 成为观众"));
+        leave.setCustomName(Text.literal(en ? "§cLeave team / Spectator" : "§c退出队伍 / 成为观众"));
         inv.setStack(8, leave);
         return inv;
     }
@@ -93,24 +95,27 @@ public final class TeamSelectorScreenHandler extends GenericContainerScreenHandl
             String teamId = StructureRaceConfig.DEFAULT_TEAM_IDS.get(slotIndex);
             int result = StructureRaceEvents.joinTeam(player.server, player, teamId);
             if (result == 0) {
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "你已加入 " + StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(teamId, teamId)
-                        + "。"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "你已加入 " + StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(teamId, teamId) + "。",
+                        "You joined "
+                                + StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(teamId, teamId) + ".")), false);
             } else if (result == 1) {
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "§c比赛进行中不能换队，请等待比赛结束或由管理员调整。§r"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "§c比赛进行中不能换队，请等待比赛结束或由管理员调整。§r",
+                        "§cYou cannot switch teams during a match. Wait for it to end.§r")), false);
             }
         } else {
             int result = StructureRaceEvents.leaveTeam(player.server, player);
             if (result == 0) {
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "你已离开队伍，成为观众。"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "你已离开队伍，成为观众。", "You left your team and became a spectator.")), false);
             } else if (result == 1) {
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "§c比赛进行中不能离队，请等待比赛结束或由管理员调整。§r"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "§c比赛进行中不能离队，请等待比赛结束或由管理员调整。§r",
+                        "§cYou cannot leave your team during a match. Wait for it to end.§r")), false);
             } else if (result == 2) {
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "你本来就不在任何队伍中。"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "你本来就不在任何队伍中。", "You are not on any team.")), false);
             }
         }
     }

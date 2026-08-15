@@ -149,6 +149,17 @@ public final class StructureRaceEvents {
     private static int pendingEndTicks = -1;
     private static MinecraftServer pendingEndServer;
 
+    // ==================== 胜利烟花（多波次，延长庆祝时间） ====================
+
+    /** 烟花波数 */
+    private static final int FIREWORK_WAVES = 8;
+    /** 每波烟花数量（每波少量，分多波拉长庆祝时间） */
+    private static final int FIREWORK_PER_WAVE = 5;
+    /** 波次间隔（tick，2 秒） */
+    private static final int FIREWORK_WAVE_INTERVAL = 40;
+    private static int fireworkWavesLeft = 0;
+    private static int fireworkWaveTicks = 0;
+
     /** 竞速目标结构 tag（用于迷路指引 locateStructure） */
     private static final TagKey<Structure> RACE_STRUCTURES_TAG = TagKey.of(
             RegistryKeys.STRUCTURE, new Identifier("structure_race", "race_structures"));
@@ -213,6 +224,8 @@ public final class StructureRaceEvents {
             preStartCountdownTicks = -1;
             lastCountdownSecond = -1;
             lobbyWaitPos = null;
+            fireworkWavesLeft = 0;
+            fireworkWaveTicks = 0;
             LOGGER.info("[StructureRace] 新世界服务器启动，内存竞速状态已重置。");
         });
 
@@ -251,7 +264,8 @@ public final class StructureRaceEvents {
                 lastCountdownSecond = sec;
                 if (sec > 0) {
                     for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
-                        sendTitle(p, "§e§l" + sec, "§r比赛即将开始…", 5, 15, 5);
+                        sendTitle(p, "§e§l" + sec,
+                                Lang.get(p, "§r比赛即将开始…", "§rStarting soon…"), 5, 15, 5);
                     }
                 }
             }
@@ -281,6 +295,16 @@ public final class StructureRaceEvents {
                 MinecraftServer endServer = pendingEndServer;
                 pendingEndServer = null;
                 executeEndResult(endServer);
+            }
+        }
+
+        // 胜利烟花多波次：每间隔放一波，延长庆祝时间
+        if (fireworkWavesLeft > 0) {
+            fireworkWaveTicks--;
+            if (fireworkWaveTicks <= 0) {
+                spawnVictoryFireworks(server);
+                fireworkWavesLeft--;
+                fireworkWaveTicks = FIREWORK_WAVE_INTERVAL;
             }
         }
 
@@ -334,11 +358,15 @@ public final class StructureRaceEvents {
                         }
                     }
                     int left = Math.max(1, (StructureRaceConfig.JOIN_WAIT_TICKS - pst.joinTicks) / 20 + 1);
-                    sendActionBar(player, "§e正在加载世界数据… §7（§6" + left + "§7 秒后进入大厅）");
+                    sendActionBar(player, Lang.get(player,
+                            "§e正在加载世界数据… §7（§6" + left + "§7 秒后进入大厅）",
+                            "§eLoading world data… §7(§6" + left + "§7s to lobby)"));
                     if (pst.joinTicks >= StructureRaceConfig.JOIN_WAIT_TICKS) {
                         pst.pendingLobby = false;
                         teleportToLobby(player);
-                        sendActionBar(player, "§a欢迎来到结构竞速大厅！请用指南针组队。");
+                        sendActionBar(player, Lang.get(player,
+                                "§a欢迎来到结构竞速大厅！请用指南针组队。",
+                                "§aWelcome to the lobby! Use the compass to join a team."));
                     }
                     continue;
                 }
@@ -405,9 +433,9 @@ public final class StructureRaceEvents {
                 || (remainingSeconds <= 30 && remainingSeconds % 10 == 0);
         if (shouldAnnounce && remainingSeconds != lastAnnouncedSeconds) {
             lastAnnouncedSeconds = remainingSeconds;
-            server.getPlayerManager().broadcast(Text.literal(
-                    StructureRaceConfig.BROADCAST_PREFIX
-                            + "§e⏰ §r距比赛结束还有 §6" + formatSeconds(remainingSeconds) + "§r！"), false);
+            broadcastLang(server,
+                    "§e⏰ §r距比赛结束还有 §6" + formatSeconds(remainingSeconds) + "§r！",
+                    "§e⏰ §r" + formatSecondsEn(remainingSeconds) + " left until the match ends!");
         }
     }
 
@@ -433,8 +461,7 @@ public final class StructureRaceEvents {
         dumpScoreLog(server);
 
         if (topTeams.isEmpty()) {
-            server.getPlayerManager().broadcast(Text.literal(
-                    StructureRaceConfig.BROADCAST_PREFIX + "§e⏰ §r比赛结束，无人得分！"), false);
+            broadcastLang(server, "§e⏰ §r比赛结束，无人得分！", "§e⏰ §rMatch over, nobody scored!");
             for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
                 teleportToLobby(p);
             }
@@ -454,6 +481,13 @@ public final class StructureRaceEvents {
         long s = seconds % 60;
         if (m > 0) return m + " 分 " + s + " 秒";
         return s + " 秒";
+    }
+
+    private static String formatSecondsEn(long seconds) {
+        long m = seconds / 60;
+        long s = seconds % 60;
+        if (m > 0) return m + " min " + s + " s";
+        return s + " s";
     }
 
     // ==================== 玩家加入/离开 ====================
@@ -683,39 +717,40 @@ public final class StructureRaceEvents {
                 hasBook = true;
             }
         }
-        if (!hasCompass) inv.offerOrDrop(createTeamSelector());
-        if (!hasBook) inv.offerOrDrop(createRuleBook());
+        if (!hasCompass) inv.offerOrDrop(createTeamSelector(player));
+        if (!hasBook) inv.offerOrDrop(createRuleBook(player));
         if (player.interactionManager.getGameMode() != GameMode.ADVENTURE) {
             player.changeGameMode(GameMode.ADVENTURE);
         }
     }
 
-    /** 创建队伍选择器（带 NBT 标记的指南针） */
-    public static ItemStack createTeamSelector() {
+    /** 创建队伍选择器（带 NBT 标记的指南针；物品名按玩家语言） */
+    public static ItemStack createTeamSelector(ServerPlayerEntity player) {
         ItemStack stack = new ItemStack(Items.COMPASS);
         NbtCompound nbt = new NbtCompound();
         nbt.putBoolean(StructureRaceConfig.TEAM_SELECTOR_TAG, true);
         nbt.putString("structure_race:item", "team_selector");
         stack.setNbt(nbt);
-        stack.setCustomName(Text.literal("§b队伍选择器 §7(右键打开)"));
+        stack.setCustomName(Text.literal(Lang.get(player,
+                "§b队伍选择器 §7(右键打开)", "§bTeam Selector §7(right-click)")));
         return stack;
     }
 
-    /** 创建玩法规则书（写好的书，含玩法/规则/指令/积分关系） */
-    private static ItemStack createRuleBook() {
+    /** 创建玩法规则书（写好的书，含玩法/规则/指令/积分关系；按玩家语言生成） */
+    private static ItemStack createRuleBook(ServerPlayerEntity player) {
         ItemStack stack = new ItemStack(Items.WRITTEN_BOOK);
         NbtCompound nbt = new NbtCompound();
-        nbt.putString("title", "结构竞速玩法指南");
+        nbt.putString("title", Lang.get(player, "结构竞速玩法指南", "Structure Race Guide"));
         nbt.putString("author", "structure_race");
         nbt.putInt("generation", 0);
         nbt.putBoolean("resolved", true);
         NbtList pages = new NbtList();
-        for (String page : StructureRaceConfig.getRuleBookPages()) {
+        for (String page : StructureRaceConfig.getRuleBookPages(Lang.langOf(player))) {
             pages.add(NbtString.of(Text.Serializer.toJson(Text.literal(page))));
         }
         nbt.put("pages", pages);
         stack.setNbt(nbt);
-        stack.setCustomName(Text.literal("§6结构竞速·玩法指南"));
+        stack.setCustomName(Text.literal(Lang.get(player, "§6结构竞速·玩法指南", "§6Structure Race Guide")));
         return stack;
     }
     // ==================== 信息书（积分映射 / 竞速进度） ====================
@@ -759,7 +794,7 @@ public final class StructureRaceEvents {
 
     /** 打开规则书（玩法指南），任何阶段都可查看 */
     public static void openRuleBookScreen(ServerPlayerEntity player) {
-        openBookScreen(player, createRuleBook());
+        openBookScreen(player, createRuleBook(player));
     }
 
     /**
@@ -774,134 +809,180 @@ public final class StructureRaceEvents {
             openPointBook(player);
         } else if (StructureRaceNetworking.TYPE_PROGRESS.equals(type)) {
             openProgressBook(player);
+        } else if (StructureRaceNetworking.TYPE_LANGUAGE.equals(type)) {
+            LanguageSelectorScreenHandler.open(player);
         }
     }
 
-    /** 打开「积分映射书」：目录 + 结构分值 + 群系分值 + 其他积分规则 */
+    /** 打开「积分映射书」：目录 + 结构分值 + 群系分值 + 其他积分规则（按玩家语言） */
     public static void openPointBook(ServerPlayerEntity player) {
         List<String> pages = new ArrayList<>();
-        pages.add("§l§n积分映射·目录§r\n"
-                + "§l① 结构分值§r 下一页\n"
-                + "§l② 群系分值§r 其后\n"
-                + "§l③ 其他积分§r 最后\n"
-                + "§l【结构规则】§r\n"
-                + "发现即加分，同队不\n"
-                + "重复；结构被任意队\n"
-                + "伍发现即占有，\n"
-                + "先到先得。\n"
-                + "§l【群系规则】§r\n"
-                + "首次踏入加分，群系\n"
-                + "不占有，各队可\n"
-                + "分别获得；已探索\n"
-                + "群系不再加分。");
+        pages.add(Lang.get(player,
+                "§l§n积分映射·目录§r\n"
+                        + "§l① 结构分值§r 下一页\n"
+                        + "§l② 群系分值§r 其后\n"
+                        + "§l③ 其他积分§r 最后\n"
+                        + "§l【结构规则】§r\n"
+                        + "发现即加分，同队不\n"
+                        + "重复；结构被任意队\n"
+                        + "伍发现即占有，\n"
+                        + "先到先得。\n"
+                        + "§l【群系规则】§r\n"
+                        + "首次踏入加分，群系\n"
+                        + "不占有，各队可\n"
+                        + "分别获得；已探索\n"
+                        + "群系不再加分。",
+                "§l§nPoint List - Contents§r\n"
+                        + "§l1. Structures§r next page\n"
+                        + "§l2. Biomes§r after that\n"
+                        + "§l3. Other Points§r last\n"
+                        + "§l【Structure】§r\n"
+                        + "First discovery scores.\n"
+                        + "No repeat for a team.\n"
+                        + "Claimed by one team =\n"
+                        + "no points for others.\n"
+                        + "§l【Biomes】§r\n"
+                        + "First time in a biome\n"
+                        + "scores. Not first-come;\n"
+                        + "each team can earn\n"
+                        + "separately. Explored\n"
+                        + "biomes give no points."));
         // 结构分值
-        StringBuilder sb = new StringBuilder("§l① 结构分值§r\n");
+        StringBuilder sb = new StringBuilder(Lang.get(player, "§l① 结构分值§r\n", "§l1. Structures§r\n"));
         int count = 0;
         for (RegistryKey<Structure> key : StructureRaceConfig.STRUCTURE_SCORES.keySet()) {
             int score = StructureRaceConfig.STRUCTURE_SCORES.get(key);
-            String name = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(
-                    key.getValue().getPath(), key.getValue().getPath());
+            String name = Lang.structName(player, key.getValue().getPath());
             if (count > 0 && count % 12 == 0) {
                 pages.add(sb.toString());
-                sb = new StringBuilder("§l① 结构分值(续)§r\n");
+                sb = new StringBuilder(Lang.get(player, "§l① 结构分值(续)§r\n", "§l1. Structures (cont.)§r\n"));
             }
             sb.append(name).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
         // 群系分值
-        sb = new StringBuilder("§l② 群系分值§r\n");
+        sb = new StringBuilder(Lang.get(player, "§l② 群系分值§r\n", "§l2. Biomes§r\n"));
         count = 0;
         for (RegistryKey<Biome> key : StructureRaceConfig.BIOME_SCORES.keySet()) {
             int score = StructureRaceConfig.BIOME_SCORES.get(key);
-            String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(
-                    key.getValue().toString(), key.getValue().getPath());
+            String name = Lang.biomeName(player, key.getValue().toString());
             if (count > 0 && count % 12 == 0) {
                 pages.add(sb.toString());
-                sb = new StringBuilder("§l② 群系分值(续)§r\n");
+                sb = new StringBuilder(Lang.get(player, "§l② 群系分值(续)§r\n", "§l2. Biomes (cont.)§r\n"));
             }
             sb.append(name).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
         // 其他积分规则
-        sb = new StringBuilder("§l③ 其他积分规则§r\n");
-        sb.append("里程：每500格+1分\n坐船行驶不计\n\n");
-        sb.append("击杀：每10只敌对怪物\n+1分（含远程击杀）\n\n");
-        sb.append("维度：首次进入下界+10\n首次进入末地+20\n（每队各一次）\n\n");
-        sb.append("府邸：有探险家地图+50\n无地图+30");
+        sb = new StringBuilder(Lang.get(player, "§l③ 其他积分规则§r\n", "§l3. Other Points§r\n"));
+        if (Lang.isEn(player)) {
+            sb.append("Distance: +1 per 500\nblocks (boats not\ncounted)\n\n");
+            sb.append("Kills: +1 per 10 hostile\nmobs (ranged included)\n\n");
+            sb.append("Dimensions: Nether +10\nEnd +20 (once per team)\n\n");
+            sb.append("Mansion: with map +50\nwithout map +30");
+        } else {
+            sb.append("里程：每500格+1分\n坐船行驶不计\n\n");
+            sb.append("击杀：每10只敌对怪物\n+1分（含远程击杀）\n\n");
+            sb.append("维度：首次进入下界+10\n首次进入末地+20\n（每队各一次）\n\n");
+            sb.append("府邸：有探险家地图+50\n无地图+30");
+        }
         pages.add(sb.toString());
-        openInfoBook(player, "积分映射", pages);
+        openInfoBook(player, Lang.get(player, "积分映射", "Point List"), pages);
     }
 
-    /** 打开「进度书」：本队摘要 + 已发现结构及数量 + 已探索/未找到的可加分群系 */
+
+    /** 打开「进度书」：本队摘要（含队员名单）+ 已发现结构及数量 + 已探索/未找到的可加分群系（按玩家语言） */
     public static void openProgressBook(ServerPlayerEntity player) {
         StructureRaceState state = StructureRaceState.get(player.getServer().getOverworld());
         StructureRaceState.TeamData team = state.getTeamByMember(player.getUuid());
         List<String> pages = new ArrayList<>();
+        boolean en = Lang.isEn(player);
         if (team == null) {
-            pages.add("§l§n竞速进度§r\n\n你尚未加入任何队伍。\n加入队伍后才能查看\n本队的探索进度。\n\n可用 §1/race join <颜色>§r\n或右键指南针组队。\n\n§7按 §1U§r 键可刷新本页");
-            openInfoBook(player, "竞速进度", pages);
+            pages.add(Lang.get(player,
+                    "§l§n竞速进度§r\n\n你尚未加入任何队伍。\n加入队伍后才能查看\n本队的探索进度。\n\n可用 §1/race join <颜色>§r\n或右键指南针组队。\n\n§7按 §1U§r 键可刷新本页",
+                    "§l§nRace Progress§r\n\nYou are not on any\nteam yet. Join a team\nto view your progress.\n\nUse §1/race join <color>§r\nor right-click the compass.\n\n§7Press §1U§r to refresh"));
+            openInfoBook(player, Lang.get(player, "竞速进度", "Progress"), pages);
             return;
         }
-        String teamZh = teamColorCode(team.teamId) + teamZhName(team.teamId) + "§r";
+        String teamName = teamColorCode(team.teamId) + Lang.teamName(player, team.teamId) + "§r";
+        // 页1：摘要 + 队员名单（在线标记，单人队伍也能明确看到自己）
+        StringBuilder sb = new StringBuilder("§l§n" + teamName + " " + Lang.get(player, "探索进度", "Progress") + "§r\n");
+        sb.append(Lang.get(player, "总分", "Score")).append("：§l").append(team.totalScore).append("§r\n");
+        sb.append(Lang.get(player, "队员", "Members")).append("：§f").append(team.members.size()).append("§r\n");
+        sb.append(Lang.get(player, "已发现结构", "Structures")).append("：§6")
+                .append(team.discoveredStructures.size()).append("§r\n");
+        sb.append(Lang.get(player, "已探索群系", "Biomes")).append("：§6")
+                .append(team.discoveredBiomes.size()).append("§r\n\n");
+        sb.append("§l").append(en ? "[Online Members]" : "【在线队员】").append("§r\n");
+        int mc = 0;
+        for (UUID uid : team.members) {
+            ServerPlayerEntity mp = player.getServer().getPlayerManager().getPlayer(uid);
+            if (mp == null) continue;
+            sb.append(mp.getEntityName()).append(" §a●§r\n");
+            if (++mc % 10 == 0) {
+                pages.add(sb.toString());
+                sb = new StringBuilder("§l").append(en ? "[Members (cont.)]" : "【在线队员(续)】").append("§r\n");
+            }
+        }
+        if (mc == 0) sb.append(en ? "(none online)\n" : "（无在线队员）\n");
+        pages.add(sb.toString());
         // 已找到结构及数量
         Map<String, Integer> structCount = new HashMap<>();
         for (String uniqueId : team.discoveredStructures) {
             structCount.merge(extractRegistryName(uniqueId), 1, Integer::sum);
         }
-        StringBuilder sb = new StringBuilder("§l§n" + teamZh + " 探索进度§r\n");
-        sb.append("总分：§l").append(team.totalScore).append("§r\n");
-        sb.append("队员：§f").append(team.members.size()).append("§r 人\n");
-        sb.append("已发现结构：§6").append(team.discoveredStructures.size()).append("§r 个\n");
-        sb.append("已探索群系：§6").append(team.discoveredBiomes.size()).append("§r 个\n\n");
-        sb.append("§l【已发现结构】§r\n");
+        sb = new StringBuilder("§l").append(en ? "[Structures Found]" : "【已发现结构】").append("§r\n");
         if (structCount.isEmpty()) {
-            sb.append("（暂无）\n");
+            sb.append(en ? "(none)\n" : "（暂无）\n");
         } else {
             int c = 0;
             for (Map.Entry<String, Integer> e : structCount.entrySet()) {
-                String name = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(e.getKey(), e.getKey());
+                String name = Lang.structName(player, e.getKey());
                 sb.append(name).append(" x").append(e.getValue()).append('\n');
                 if (++c % 12 == 0) {
                     pages.add(sb.toString());
-                    sb = new StringBuilder("§l【已发现结构(续)】§r\n");
+                    sb = new StringBuilder("§l").append(en ? "[Structures (cont.)]" : "【已发现结构(续)】").append("§r\n");
                 }
             }
         }
-        sb.append("\n§l【已探索群系】§r\n");
+        pages.add(sb.toString());
+        // 已探索群系
+        sb = new StringBuilder("§l").append(en ? "[Biomes Explored]" : "【已探索群系】").append("§r\n");
         if (team.discoveredBiomes.isEmpty()) {
-            sb.append("（暂无）\n");
+            sb.append(en ? "(none)\n" : "（暂无）\n");
         } else {
             int c = 0;
             for (String id : team.discoveredBiomes) {
-                String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(id, id);
+                String name = Lang.biomeName(player, id);
                 sb.append(name).append('\n');
                 if (++c % 14 == 0) {
                     pages.add(sb.toString());
-                    sb = new StringBuilder("§l【已探索群系(续)】§r\n");
+                    sb = new StringBuilder("§l").append(en ? "[Biomes (cont.)]" : "【已探索群系(续)】").append("§r\n");
                 }
             }
         }
         pages.add(sb.toString());
         // 未找到的可加分群系
-        sb = new StringBuilder("§l§n未找到的可加分群系§r\n");
+        sb = new StringBuilder("§l§n").append(en ? "Unexplored Scoring Biomes" : "未找到的可加分群系").append("§r\n");
         int c = 0;
         for (RegistryKey<Biome> key : StructureRaceConfig.BIOME_SCORES.keySet()) {
             String id = key.getValue().toString();
             if (team.discoveredBiomes.contains(id)) continue;
-            String name = StructureRaceConfig.BIOME_NAMES.getOrDefault(id, key.getValue().getPath());
+            String name = Lang.biomeName(player, id);
             int score = StructureRaceConfig.BIOME_SCORES.get(key);
             sb.append(name).append(' ').append(score).append('\n');
             if (++c % 14 == 0) {
                 pages.add(sb.toString());
-                sb = new StringBuilder("§l§n未找到群系(续)§r\n");
+                sb = new StringBuilder("§l§n").append(en ? "Biomes (cont.)" : "未找到群系(续)").append("§r\n");
             }
         }
-        if (c == 0) sb.append("（全部已探索！）");
+        if (c == 0) sb.append(en ? "(all explored!)\n" : "（全部已探索！）\n");
         pages.add(sb.toString());
-        openInfoBook(player, "竞速进度", pages);
+        openInfoBook(player, Lang.get(player, "竞速进度", "Progress"), pages);
     }
+
 
 
 
@@ -909,31 +990,35 @@ public final class StructureRaceEvents {
 
     /** 开始比赛结算：广播排名、按阵营显示 title，10 秒后传送回大厅并放烟花 */
     private static void startEndResult(MinecraftServer server, List<String> winnerTeamIds, boolean tie) {
-        // 聊天栏：每队分数与排名
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "§6====== 比赛结束·排名 ======"), false);
-        for (String line : getLeaderboard(server)) {
-            server.getPlayerManager().broadcast(Text.literal("§7" + line), false);
+        // 聊天栏：每队分数与排名（按各自语言）
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            p.sendMessage(Text.literal(Lang.get(p,
+                    StructureRaceConfig.BROADCAST_PREFIX + "§6====== 比赛结束·排名 ======",
+                    StructureRaceConfig.BROADCAST_PREFIX + "§6====== Match Over - Rankings ======")), false);
+            for (String line : getLeaderboard(server, Lang.langOf(p))) {
+                p.sendMessage(Text.literal("§7" + line), false);
+            }
         }
 
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
-        List<String> coloredNames = new ArrayList<>();
-        for (String id : winnerTeamIds) {
-            coloredNames.add(teamColorCode(id) + teamZhName(id) + "§r");
-        }
-        String winnerText = tie
-                ? "平局！" + String.join("、", coloredNames) + " 并列第一"
-                : coloredNames.get(0) + " 获得胜利！";
-
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             StructureRaceState.TeamData pTeam = state.getTeamByMember(p.getUuid());
             boolean isWinner = pTeam != null && winnerTeamIds.contains(pTeam.teamId);
             if (tie) {
-                sendTitle(p, "§6§l平局", "§r多个队伍并列第一", 10, 100, 20);
-            } else if (isWinner) {
-                sendTitle(p, "§a§l恭喜获得胜利！", "§r" + winnerText, 10, 100, 20);
+                sendTitle(p, Lang.get(p, "§6§l平局", "§6§lDraw"),
+                        Lang.get(p, "§r多个队伍并列第一", "§rMultiple teams tied for first!"), 10, 100, 20);
             } else {
-                sendTitle(p, "§c§l游戏结束", "§r" + winnerText, 10, 100, 20);
+                String wid = winnerTeamIds.get(0);
+                String zhWin = "§r" + teamColorCode(wid) + teamZhName(wid) + "§r 获得胜利！";
+                String enWin = "§r" + teamColorCode(wid)
+                        + StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(wid, wid) + "§r Team wins!";
+                if (isWinner) {
+                    sendTitle(p, Lang.get(p, "§a§l恭喜获得胜利！", "§a§lVictory!"),
+                            Lang.get(p, zhWin, enWin), 10, 100, 20);
+                } else {
+                    sendTitle(p, Lang.get(p, "§c§l游戏结束", "§c§lGame Over"),
+                            Lang.get(p, zhWin, enWin), 10, 100, 20);
+                }
             }
         }
 
@@ -942,19 +1027,22 @@ public final class StructureRaceEvents {
         pendingEndServer = server;
     }
 
-    /** 结算延迟结束：全体回大厅 + 放烟花 */
+    /** 结算延迟结束：全体回大厅 + 启动多波次胜利烟花 */
     private static void executeEndResult(MinecraftServer server) {
         if (server == null) return;
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             teleportToLobby(p);
         }
-        spawnVictoryFireworks(server);
+        // 启动多波次烟花（立即放第一波，之后每隔 2 秒一波）
+        fireworkWavesLeft = FIREWORK_WAVES;
+        fireworkWaveTicks = 0;
     }
 
+    /** 燃放一波胜利烟花（每波少量，由 onServerTick 周期触发形成多波次庆祝） */
     private static void spawnVictoryFireworks(MinecraftServer server) {
         ServerWorld lobby = server.getWorld(LOBBY_KEY);
         if (lobby == null) return;
-        for (int i = 0; i < 24; i++) {
+        for (int i = 0; i < FIREWORK_PER_WAVE; i++) {
             double x = (Math.random() - 0.5) * 20;
             double z = (Math.random() - 0.5) * 20;
             double y = LOBBY_PLATFORM_Y + 6 + Math.random() * 8;
@@ -963,7 +1051,8 @@ public final class StructureRaceEvents {
             rocket.setVelocity(0, 0.1 + Math.random() * 0.15, 0);
             lobby.spawnEntity(rocket);
         }
-        LOGGER.info("[StructureRace] 比赛结束：大厅烟花已燃放。");
+        LOGGER.info("[StructureRace] 比赛结束：大厅烟花燃放一波（剩余 {} 波）。",
+                Math.max(0, fireworkWavesLeft - 1));
     }
 
     private static ItemStack createRandomFirework() {
@@ -995,6 +1084,20 @@ public final class StructureRaceEvents {
     /** 发送 actionbar 提示 */
     private static void sendActionBar(ServerPlayerEntity player, String message) {
         player.sendMessage(Text.literal(message), true);
+    }
+
+    /** 向所有在线玩家广播双语文本（按各自语言） */
+    private static void broadcastLang(MinecraftServer server, String zh, String en) {
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            p.sendMessage(Text.literal(Lang.get(p, zh, en)), false);
+        }
+    }
+
+    /** 向所有在线玩家广播双语格式化文本（按各自语言） */
+    private static void broadcastLang(MinecraftServer server, String zh, String en, Object... args) {
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            p.sendMessage(Text.literal(Lang.fmt(p, zh, en, args)), false);
+        }
     }
 
     // ==================== 聊天消息系统 ====================
@@ -1041,12 +1144,15 @@ public final class StructureRaceEvents {
         if (global) {
             // 全局消息：所有人可见
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§f[全局] §r" + playerDisplayName(sender, state) + "§7: §r" + display);
+                    + Lang.get(sender, "§f[全局] §r", "§f[Global] §r")
+                    + playerDisplayName(sender, state) + "§7: §r" + display);
             sender.getServer().getPlayerManager().broadcast(msg, false);
         } else if (team != null) {
-            // 队聊：仅同队玩家可见，前缀与玩家名均使用队伍颜色 + 中文队名
+            // 队聊：仅同队玩家可见，前缀与玩家名均使用队伍颜色 + 双语队名
+            String teamPrefix = Lang.get(sender, "[队聊·", "[Team·")
+                    + Lang.teamName(sender, team.teamId) + "] ";
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + teamColorCode(team.teamId) + "[队聊·" + teamZhName(team.teamId) + "] §r"
+                    + teamColorCode(team.teamId) + teamPrefix + "§r"
                     + playerDisplayName(sender, state) + "§7: §r" + display);
             for (ServerPlayerEntity p : sender.getServer().getPlayerManager().getPlayerList()) {
                 StructureRaceState.TeamData pTeam = state.getTeamByMember(p.getUuid());
@@ -1057,7 +1163,8 @@ public final class StructureRaceEvents {
         } else {
             // 观众（无队伍）：按全局发送
             Text msg = Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§7[观众] §r" + playerDisplayName(sender, state) + "§7: §r" + display);
+                    + Lang.get(sender, "§7[观众] §r", "§7[Spectator] §r")
+                    + playerDisplayName(sender, state) + "§7: §r" + display);
             sender.getServer().getPlayerManager().broadcast(msg, false);
         }
         return false; // 取消默认广播，使用自定义分发
@@ -1089,7 +1196,7 @@ public final class StructureRaceEvents {
                         state.lastFindTime = player.getServerWorld().getTime();
                         saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
                         saveState.markDirty();
-                        broadcastScore(player, team, "长途跋涉", 1, team.totalScore);
+                        broadcastScore(player, team, "长途跋涉", "Long trek", 1, team.totalScore);
                         refreshTeamScoreboard(player.server, team);
                         checkWinCondition(player, state, team, saveState);
                     }
@@ -1133,7 +1240,7 @@ public final class StructureRaceEvents {
             pd.lastFindTime = killer.getServerWorld().getTime();
             state.lastFindTime = pd.lastFindTime;
             saveState.markDirty();
-            broadcastScore(killer, team, "消灭怪物浪潮", 1, team.totalScore);
+            broadcastScore(killer, team, "消灭怪物浪潮", "Mob wave", 1, team.totalScore);
             refreshTeamScoreboard(killer.server, team);
             checkWinCondition(killer, state, team, saveState);
         }
@@ -1172,7 +1279,8 @@ public final class StructureRaceEvents {
         saveState.markDirty();
         state.lastFindTime = player.getServerWorld().getTime();
         saveState.getPlayerData(player.getUuid()).lastFindTime = state.lastFindTime;
-        broadcastScore(player, team, "踏入" + dimName, score, team.totalScore);
+        String dimEn = "the_nether".equals(cur) ? "Nether" : "the End";
+        broadcastScore(player, team, "踏入" + dimName, "Entered " + dimEn, score, team.totalScore);
         refreshTeamScoreboard(player.server, team);
         checkWinCondition(player, state, team, saveState);
     }
@@ -1203,8 +1311,9 @@ public final class StructureRaceEvents {
                 // 无速度效果，或只有速度I：给予/刷新速度I（200 tick）
                 p.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 0, false, true, true));
                 // 提示该玩家（仅本人可见）
-                sendActionBar(p, StructureRaceConfig.BROADCAST_PREFIX
-                        + "§a落后补偿：已获得速度提升 I（落后第一名 ≥" + COMPENSATION_GAP + " 分）");
+                sendActionBar(p, Lang.get(p,
+                        "§a落后补偿：已获得速度提升 I（落后第一名 ≥" + COMPENSATION_GAP + " 分）",
+                        "§aComeback bonus: Speed I granted (behind the leader by ≥" + COMPENSATION_GAP + " pts)"));
             }
         }
     }
@@ -1245,17 +1354,23 @@ public final class StructureRaceEvents {
 
             if (nearest == null) {
                 // 检索半径内没有结构
-                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                        + "§e周围 " + StructureRaceConfig.HINT_SEARCH_RADIUS
-                        + " 格内暂未发现竞速结构，继续探索吧！§7（下次提示需 7 分钟后）§r"), false);
+                player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                        "§e周围 " + StructureRaceConfig.HINT_SEARCH_RADIUS
+                                + " 格内暂未发现竞速结构，继续探索吧！§7（下次提示需 7 分钟后）§r",
+                        "§eNo race structures within " + StructureRaceConfig.HINT_SEARCH_RADIUS
+                                + " blocks. Keep exploring!§7 (next hint in 7 min)§r")), false);
                 return;
             }
 
             // 给出具体坐标与距离提示（仅该玩家可见）
-            player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX
-                    + "§e最近的竞速结构在 §6(" + nearest.getX() + ", " + nearest.getZ()
-                    + ")§r，距离 §6" + (int) dist + "§r 格（坐标 X=" + nearest.getX()
-                    + " Z=" + nearest.getZ() + "），快去探索吧！§7（下次提示需 7 分钟后）§r"), false);
+            player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
+                    "§e最近的竞速结构在 §6(" + nearest.getX() + ", " + nearest.getZ()
+                            + ")§r，距离 §6" + (int) dist
+                            + "§r 格（坐标 X=" + nearest.getX() + " Z=" + nearest.getZ()
+                            + "），快去探索吧！§7（下次提示需 7 分钟后）§r",
+                    "§eNearest race structure: §6(" + nearest.getX() + ", " + nearest.getZ()
+                            + ")§r, §6" + (int) dist + "§r blocks away (X=" + nearest.getX()
+                            + " Z=" + nearest.getZ() + "). Go explore!§7 (next hint in 7 min)§r")), false);
         } catch (Exception e) {
             LOGGER.warn("[StructureRace] 指引查询失败: {}", e.getMessage());
         }
@@ -1321,7 +1436,8 @@ public final class StructureRaceEvents {
 
             String structName = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(
                     structKey.getValue().getPath(), structKey.getValue().getPath());
-            broadcastScore(player, team, "发现" + structName, finalScore, team.totalScore);
+            String structNameEn = Lang.structName(player, structKey.getValue().getPath());
+            broadcastScore(player, team, "发现" + structName, "Found " + structNameEn, finalScore, team.totalScore);
 
             checkWinCondition(player, state, team, saveState);
             return;
@@ -1378,7 +1494,8 @@ public final class StructureRaceEvents {
         refreshTeamScoreboard(player.server, team);
 
         String biomeName = StructureRaceConfig.BIOME_NAMES.getOrDefault(biomeId, biomeId);
-        broadcastScore(player, team, "探索" + biomeName, scoreValue, team.totalScore);
+        broadcastScore(player, team, "探索" + biomeName,
+                "Explored " + Lang.biomeName(player, biomeId), scoreValue, team.totalScore);
 
         checkWinCondition(player, state, team, saveState);
     }
@@ -1508,6 +1625,8 @@ public final class StructureRaceEvents {
         lastAnnouncedSeconds = -1;
         pendingEndTicks = -1;
         pendingEndServer = null;
+        fireworkWavesLeft = 0;
+        fireworkWaveTicks = 0;
         cachedMatchActive = true;
         cachedWinCondition = state.winCondition;
         cachedWinScore = state.winScore;
@@ -1521,9 +1640,9 @@ public final class StructureRaceEvents {
             onPlayerSpawn(player, false);
         }
 
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX
-                        + "§e🏁 比赛即将开始！§r5 秒后传送至主世界！"), false);
+        broadcastLang(server,
+                "§e🏁 比赛即将开始！§r5 秒后传送至主世界！",
+                "§e🏁 Match starting soon!§r Teleporting to overworld in 5 seconds!");
         LOGGER.info("[StructureRace] 新一局比赛进入开赛倒计时，模式: {}", state.winCondition);
         return true;
     }
@@ -1584,13 +1703,18 @@ public final class StructureRaceEvents {
             }
         }
 
-        String modeMsg = "timer".equals(state.winCondition)
+        String zhMode = "timer".equals(state.winCondition)
                 ? "限时 " + (state.matchDurationTicks / 20 / 60) + " 分钟！时间结束时积分最高者获胜！"
                 : "率先达到 " + state.winScore + " 分者获胜！";
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "§e🏁 比赛开始！§r" + modeMsg), false);
+        String enMode = "timer".equals(state.winCondition)
+                ? "Timer: " + (state.matchDurationTicks / 20 / 60) + " min! Highest score at the end wins!"
+                : "First to reach " + state.winScore + " points wins!";
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
-            sendTitle(p, "§a§l比赛开始！", "§r" + modeMsg, 10, 60, 10);
+            p.sendMessage(Text.literal(Lang.get(p,
+                    StructureRaceConfig.BROADCAST_PREFIX + "§e🏁 比赛开始！§r" + zhMode,
+                    StructureRaceConfig.BROADCAST_PREFIX + "§e🏁 Match started!§r " + enMode)), false);
+            sendTitle(p, Lang.get(p, "§a§l比赛开始！", "§a§lMatch Started!"),
+                    Lang.get(p, "§r" + zhMode, "§r" + enMode), 10, 60, 10);
         }
         LOGGER.info("[StructureRace] 新一局比赛正式开始，模式: {}", state.winCondition);
     }
@@ -1602,8 +1726,7 @@ public final class StructureRaceEvents {
         cachedMatchActive = false;
         preStartCountdownTicks = -1;
         lastCountdownSecond = -1;
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "§c比赛已停止，暂停计分。§r"), false);
+        broadcastLang(server, "§c比赛已停止，暂停计分。§r", "§cMatch stopped, scoring paused.§r");
     }
 
     public static void resumeMatch(MinecraftServer server) {
@@ -1611,8 +1734,7 @@ public final class StructureRaceEvents {
         state.matchActive = true;
         state.markDirty();
         cachedMatchActive = true;
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "§a比赛已恢复，继续计分。§r"), false);
+        broadcastLang(server, "§a比赛已恢复，继续计分。§r", "§aMatch resumed, scoring continues.§r");
         LOGGER.info("[StructureRace] 比赛恢复，模式: {}", state.winCondition);
     }
 
@@ -1639,6 +1761,8 @@ public final class StructureRaceEvents {
         pendingEndServer = null;
         preStartCountdownTicks = -1;
         lastCountdownSecond = -1;
+        fireworkWavesLeft = 0;
+        fireworkWaveTicks = 0;
         cachedMatchActive = false;
         // 队伍分数已归零，刷新队伍计分板（无成员队伍不显示）
         refreshAllTeamScoreboards(server);
@@ -1646,8 +1770,7 @@ public final class StructureRaceEvents {
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             teleportToLobby(p);
         }
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX + "§c比赛已重置（未开始）。§r"), false);
+        broadcastLang(server, "§c比赛已重置（未开始）。§r", "§cMatch reset (not started).§r");
     }
 
     public static void setWinCondition(MinecraftServer server, String mode) {
@@ -1839,21 +1962,23 @@ public final class StructureRaceEvents {
         target.addStatusEffect(new StatusEffectInstance(StatusEffects.SPEED, 200, 1, false, true, true));
 
         refreshTeamScoreboard(server, targetTeam);
-        server.getPlayerManager().broadcast(Text.literal(
-                StructureRaceConfig.BROADCAST_PREFIX
-                        + "§c[" + targetTeam.teamId + "]§r §a" + target.getEntityName()
-                        + " §r被召回至队友身边（队伍 -§6" + RECALL_COST + "§r 分）"), false);
+        broadcastLang(server,
+                "§c[" + teamZhName(targetTeam.teamId) + "]§r §a" + target.getEntityName()
+                        + " §r被召回至队友身边（队伍 -§6" + RECALL_COST + "§r 分）",
+                "§c[" + StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(targetTeam.teamId, targetTeam.teamId)
+                        + "]§r §a" + target.getEntityName()
+                        + " §rwas recalled to their teammate (team -§6" + RECALL_COST + "§r pts)");
         LOGGER.info("[StructureRace] 玩家 {} 被召回（队伍 {}）", target.getEntityName(), targetTeam.teamId);
         return 0;
     }
 
     // ==================== 队伍信息查询 ====================
 
-    public static List<String> listTeams(MinecraftServer server) {
+    public static List<String> listTeams(MinecraftServer server, String lang) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         List<String> lines = new ArrayList<>();
         if (state.getAllTeams().isEmpty()) {
-            lines.add("当前没有队伍。");
+            lines.add(Lang.get(lang, "当前没有队伍。", "There are no teams."));
             return lines;
         }
         for (StructureRaceState.TeamData team : state.getAllTeams().values()) {
@@ -1863,44 +1988,53 @@ public final class StructureRaceEvents {
                 if (members.length() > 0) members.append(", ");
                 members.append(p != null ? p.getEntityName() : uuid.toString().substring(0, 8));
             }
-            String zh = StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(team.teamId, team.teamId);
+            String name = Lang.get(lang,
+                    StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(team.teamId, team.teamId),
+                    StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(team.teamId, team.teamId));
             Formatting color = StructureRaceConfig.TEAM_FORMATTING.get(team.teamId);
-            lines.add((color != null ? color.toString() : "") + zh + "§r (§e" + team.totalScore
-                    + "§r 分): " + (members.length() == 0 ? "§7无成员" : members));
+            lines.add((color != null ? color.toString() : "") + name + "§r (§e" + team.totalScore
+                    + "§r " + Lang.get(lang, "分", "pts") + "): "
+                    + (members.length() == 0 ? "§7" + Lang.get(lang, "无成员", "no members") : members));
         }
         return lines;
     }
 
-    public static List<String> getTeamInfo(MinecraftServer server, String teamId) {
+    public static List<String> getTeamInfo(MinecraftServer server, String teamId, String lang) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         StructureRaceState.TeamData team = state.getTeam(teamId);
         if (team == null) return null;
         List<String> lines = new ArrayList<>();
-        lines.add("§6队伍 " + team.teamId + "§r  总分: §e" + team.totalScore + "§r 分  "
-                + "成员: " + team.members.size() + "人");
+        lines.add("§6" + Lang.get(lang, "队伍", "Team") + " " + team.teamId + "§r  "
+                + Lang.get(lang, "总分", "Score") + ": §e" + team.totalScore + "§r "
+                + Lang.get(lang, "分  ", "pts  ") + Lang.get(lang, "成员", "Members") + ": "
+                + team.members.size() + Lang.get(lang, "人", " ppl"));
 
-        StringBuilder structLine = new StringBuilder("§a已发现结构: §r");
+        StringBuilder structLine = new StringBuilder("§a" + Lang.get(lang, "已发现结构", "Structures found") + ": §r");
         if (team.discoveredStructures.isEmpty()) {
-            structLine.append("无");
+            structLine.append(Lang.get(lang, "无", "none"));
         } else {
             List<String> names = new ArrayList<>();
             for (String uniqueId : team.discoveredStructures) {
                 String regName = extractRegistryName(uniqueId);
-                names.add(StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(regName, regName));
+                names.add(Lang.get(lang,
+                        StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(regName, regName),
+                        StructureRaceConfig.STRUCTURE_NAMES_EN.getOrDefault(regName, regName)));
             }
-            structLine.append(String.join("、", names));
+            structLine.append(String.join(Lang.get(lang, "、", ", "), names));
         }
         lines.add(structLine.toString());
 
-        StringBuilder biomeLine = new StringBuilder("§a已发现群系: §r");
+        StringBuilder biomeLine = new StringBuilder("§a" + Lang.get(lang, "已发现群系", "Biomes found") + ": §r");
         if (team.discoveredBiomes.isEmpty()) {
-            biomeLine.append("无");
+            biomeLine.append(Lang.get(lang, "无", "none"));
         } else {
             List<String> names = new ArrayList<>();
             for (String biomeId : team.discoveredBiomes) {
-                names.add(StructureRaceConfig.BIOME_NAMES.getOrDefault(biomeId, biomeId));
+                names.add(Lang.get(lang,
+                        StructureRaceConfig.BIOME_NAMES.getOrDefault(biomeId, biomeId),
+                        StructureRaceConfig.BIOME_NAMES_EN.getOrDefault(biomeId, biomeId)));
             }
-            biomeLine.append(String.join("、", names));
+            biomeLine.append(String.join(Lang.get(lang, "、", ", "), names));
         }
         lines.add(biomeLine.toString());
         return lines;
@@ -1932,20 +2066,24 @@ public final class StructureRaceEvents {
 
     // ==================== 状态查询 ====================
 
-    public static String getStatus(MinecraftServer server) {
+    public static String getStatus(MinecraftServer server, String lang) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
-        String mode = "timer".equals(state.winCondition) ? "限时制" : "积分制";
-        String active = state.matchActive ? "进行中" : "已停止";
+        String mode = "timer".equals(state.winCondition)
+                ? Lang.get(lang, "限时制", "Timer mode") : Lang.get(lang, "积分制", "Score mode");
+        String active = state.matchActive ? Lang.get(lang, "进行中", "Active") : Lang.get(lang, "已停止", "Stopped");
         String timePart = "";
         if ("timer".equals(state.winCondition) && state.matchActive) {
             long remaining = state.matchDurationTicks - (server.getOverworld().getTime() - state.matchStartTick);
-            timePart = "，剩余 " + formatSeconds(Math.max(0, remaining / 20));
+            timePart = Lang.get(lang, "，剩余 ", ", remaining ") + (Lang.isEnLang(lang)
+                    ? formatSecondsEn(Math.max(0, remaining / 20)) : formatSeconds(Math.max(0, remaining / 20)));
         } else if ("timer".equals(state.winCondition)) {
-            timePart = "，时长 " + (state.matchDurationTicks / 20 / 60) + " 分钟";
+            timePart = Lang.get(lang, "，时长 ", ", duration ")
+                    + (state.matchDurationTicks / 20 / 60) + (Lang.isEnLang(lang) ? " min" : " 分钟");
         }
-        return "§6[竞速] §r当前模式: " + mode + "，状态: " + active + timePart
-                + (("score".equals(state.winCondition)) ? "，获胜分数: " + state.winScore : "")
-                + "，队伍数: " + state.getAllTeams().size();
+        return Lang.get(lang, "§6[竞速] §r当前模式: ", "§6[Race] §rMode: ") + mode
+                + Lang.get(lang, "，状态: ", ", status: ") + active + timePart
+                + (("score".equals(state.winCondition)) ? Lang.get(lang, "，获胜分数: ", ", win score: ") + state.winScore : "")
+                + Lang.get(lang, "，队伍数: ", ", teams: ") + state.getAllTeams().size();
     }
 
     public static long getRemainingSeconds(MinecraftServer server) {
@@ -1956,7 +2094,7 @@ public final class StructureRaceEvents {
         return Math.max(0, remaining / 20);
     }
 
-    public static List<String> getLeaderboard(MinecraftServer server) {
+    public static List<String> getLeaderboard(MinecraftServer server, String lang) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
         List<StructureRaceState.TeamData> teams = new ArrayList<>(state.getAllTeams().values());
         teams.sort(Comparator.comparingInt((StructureRaceState.TeamData t) -> t.totalScore).reversed());
@@ -1964,10 +2102,13 @@ public final class StructureRaceEvents {
         int rank = 1;
         for (StructureRaceState.TeamData t : teams) {
             if (t.members.isEmpty()) continue; // 空队不参与排名
-            String zh = StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(t.teamId, t.teamId);
+            String name = Lang.get(lang,
+                    StructureRaceConfig.TEAM_NAMES_ZH.getOrDefault(t.teamId, t.teamId),
+                    StructureRaceConfig.TEAM_NAMES_EN.getOrDefault(t.teamId, t.teamId));
             Formatting color = StructureRaceConfig.TEAM_FORMATTING.get(t.teamId);
-            lines.add("§e" + rank + ". §r" + (color != null ? color : "") + zh
-                    + "§r: §6" + t.totalScore + "§r 分（" + t.members.size() + "人）");
+            lines.add("§e" + rank + ". §r" + (color != null ? color : "") + name
+                    + "§r: §6" + t.totalScore + "§r " + Lang.get(lang, "分（", "pts (")
+                    + t.members.size() + Lang.get(lang, "人）", " ppl)"));
             rank++;
         }
         return lines;
@@ -1995,16 +2136,17 @@ public final class StructureRaceEvents {
     // ==================== 广播 ====================
 
     private static void broadcastScore(ServerPlayerEntity player, StructureRaceState.TeamData team,
-                                        String reason, int earned, int total) {
+                                        String reasonZh, String reasonEn, int earned, int total) {
         SCORE_LOG.add(new ScoreLogEntry(player.server.getOverworld().getTime(),
-                player.getEntityName(), team.teamId, reason, earned, total));
+                player.getEntityName(), team.teamId, reasonZh, earned, total));
         StructureRaceState state = StructureRaceState.get(player.server.getOverworld());
         Text message = Text.literal(
                 StructureRaceConfig.BROADCAST_PREFIX
-                        + teamColorCode(team.teamId) + "[" + teamZhName(team.teamId) + "]§r "
+                        + teamColorCode(team.teamId) + "[" + Lang.teamName(player, team.teamId) + "]§r "
                         + playerDisplayName(player, state)
-                        + " §r获得 §6+" + earned + "§r 分（" + reason
-                        + "），队伍累计 §6" + total + "§r 分");
+                        + Lang.get(player,
+                                " §r获得 §6+" + earned + "§r 分（" + reasonZh + "），队伍累计 §6" + total + "§r 分",
+                                " §rearned §6+" + earned + "§r pts (" + reasonEn + "), team total §6" + total + "§r pts"));
         player.server.getPlayerManager().broadcast(message, false);
     }
 

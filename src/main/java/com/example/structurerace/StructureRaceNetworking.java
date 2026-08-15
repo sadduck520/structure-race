@@ -23,6 +23,9 @@ public final class StructureRaceNetworking {
     /** 请求类型：打开进度书（/race progress 内容） */
     public static final String TYPE_PROGRESS = "progress";
 
+    /** 请求类型：打开语言选择界面（/language、快捷键 L） */
+    public static final String TYPE_LANGUAGE = "language";
+
     /** C2S 通道 ID：structure_race:open_book */
     public static final Identifier OPEN_BOOK = new Identifier(StructureRaceMod.MOD_ID, "open_book");
 
