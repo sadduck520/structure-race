@@ -6,7 +6,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
  * 结构竞速 - 语言工具类（简体中文 / English）
  *
  * <p>玩家语言选择持久化在 {@link StructureRaceState.PlayerPersistentData#language} 中，
- * 通过大厅语言选择 GUI、指令 {@code /language} 或快捷键 <b>L</b> 切换。
+ * 通过大厅语言选择 GUI、指令 {@code /language} 或快捷键 <b>Y</b> 切换。
  *
  * <p>所有用户可见文本通过 {@link #get(ServerPlayerEntity, String, String)} 等按玩家语言返回。
  */

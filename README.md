@@ -18,19 +18,21 @@
 - **结构计分**：发现即加分、同队不重复、**先到先得（占有制）**
 - **群系计分**：首次踏入稀有群系加分，不占有，各队可分别获得
 - **更多积分来源**：跑图里程、怪物击杀、维度探索（下界/末地）、林地府邸
-- **落后补偿**：落后第一名 20 分以上的队伍自动获得速度提升
-- **迷路指引**：3 分钟无发现自动提示最近结构坐标（个人计时、提示后 7 分钟冷却）
+- **落后补偿**：落后第一名 20 分以上的队伍自动获得速度提升（提示每 1 分钟一次）
+- **迷路指引**：**3 分钟未找到任何结构**自动提示最近结构坐标（个人计时、提示后 7 分钟冷却）
+- **反超提醒**：当有队伍总分超过 40 分后，实时追踪排名变化并屏幕提醒（新领跑者/被超越/反超鼓励）
 - **队伍召回**：消耗 10 分把队友召回身边（5 分钟冷却）
 - **防作弊**：单次位移超 50 格视为传送，不计里程
-- **多语言**：简体中文 / English，快捷键 **L** 或 `/language` 随时切换
+- **多语言**：简体中文 / English，快捷键 **Y**、下界之星**语言选择器**或 `/language` 随时切换
+- **大厅保护**：队伍选择器/规则书/语言选择器**不可丢弃**（丢出即清除并自动补发），进大厅提示「按 Tab 查看组队情况」
 - **双端安装**：客户端 + 服务端（或单机）均需安装
 
 ---
 
 ## 🎮 How to Play / 玩法流程
 
-1. **进服**：先在主世界地底等待点加载世界数据（约 10 秒），随后自动进入大厅。
-2. **组队**：右键背包中的**队伍选择器（指南针）**打开选队界面，或输入 `/race join <颜色>`。
+1. **进服**：先在主世界地底等待点加载世界数据（约 3 秒，期间失明且限制移动，屏幕显示「地形加载中」倒计时），随后自动进入大厅并解除限制。
+2. **组队**：右键背包中的**队伍选择器（指南针）**打开选队界面，或输入 `/race join <颜色>`；右键**语言选择器（下界之星）**可随时切换语言。
 3. **开始**：管理员输入 `/race start`，全体 **5 秒倒计时**后传送至主世界出生点，背包被清空，时间重置为白天。
 4. **竞速**：探索世界，发现结构与群系为队伍赚取积分；聊天默认仅本队可见，`!` 前缀为全局消息。
 5. **结束**：达到目标分 / 时间结束 → 公布排名并显示获胜队伍，10 秒后全体回到大厅，**多波次烟花**庆祝。
@@ -55,7 +57,7 @@
 | 远古城市 | Ancient City | 25 |
 | 堡垒遗迹 | Bastion Remnant | 18 |
 | 林地府邸（有地图/无地图） | Woodland Mansion (w/ map / w/o) | 50 / 30 |
-| 末地城 | End City | 40 |
+| 末地城 | End City | 30 |
 | 要塞 | Stronghold | 30 |
 | 下界堡垒 | Nether Fortress | 15 |
 | 雪屋 | Igloo | 12 |
@@ -63,24 +65,24 @@
 | 丛林神庙 | Jungle Pyramid | 12 |
 | 古迹废墟 | Trail Ruins | 12 |
 | 废弃矿井 | Mineshaft | 10 |
-| 海底神殿 | Ocean Monument | 10 |
+| 海底神殿 | Ocean Monument | 9 |
 | 沙漠神殿 | Desert Pyramid | 8 |
 | 掠夺者前哨站 | Pillager Outpost | 8 |
-| 废弃矿井(恶地) | Mineshaft (Mesa) | 6 |
+| 废弃矿井(恶地) | Mineshaft (Mesa) | 5 |
 | 埋藏的宝藏 | Buried Treasure | 6 |
-| 村庄(平原) | Plains Village | 5 |
-| 村庄(沙漠) | Desert Village | 5 |
-| 村庄(热带草原) | Savanna Village | 5 |
-| 村庄(雪原) | Snowy Village | 5 |
-| 村庄(针叶林) | Taiga Village | 5 |
+| 村庄(平原) | Plains Village | 6 |
+| 村庄(沙漠) | Desert Village | 6 |
+| 村庄(热带草原) | Savanna Village | 6 |
+| 村庄(雪原) | Snowy Village | 6 |
+| 村庄(针叶林) | Taiga Village | 6 |
 | 沉船(搁浅) | Shipwreck (Beached) | 4 |
-| 破损传送门 | Ruined Portal | 3 |
-| 破损传送门(沙漠) | Ruined Portal (Desert) | 3 |
-| 破损传送门(丛林) | Ruined Portal (Jungle) | 3 |
-| 破损传送门(山地) | Ruined Portal (Mountain) | 3 |
-| 破损传送门(下界) | Ruined Portal (Nether) | 3 |
-| 破损传送门(海洋) | Ruined Portal (Ocean) | 3 |
-| 破损传送门(沼泽) | Ruined Portal (Swamp) | 3 |
+| 破损传送门 | Ruined Portal | 4 |
+| 破损传送门(沙漠) | Ruined Portal (Desert) | 4 |
+| 破损传送门(丛林) | Ruined Portal (Jungle) | 4 |
+| 破损传送门(山地) | Ruined Portal (Mountain) | 4 |
+| 破损传送门(下界) | Ruined Portal (Nether) | 4 |
+| 破损传送门(海洋) | Ruined Portal (Ocean) | 4 |
+| 破损传送门(沼泽) | Ruined Portal (Swamp) | 4 |
 | 沉船 | Shipwreck | 3 |
 | 海底废墟(寒带) | Ocean Ruin (Cold) | 3 |
 | 海底废墟(热带) | Ocean Ruin (Warm) | 3 |
@@ -99,8 +101,8 @@
 | 沙漠 | Desert | 5 |
 | 竹林 | Bamboo Jungle | 5 |
 | 恶地 | Badlands | 5 |
-| 被风蚀的恶地 | Eroded Badlands | 5 |
-| 繁茂恶地 | Wooded Badlands | 5 |
+| 被风蚀的恶地 | Eroded Badlands | 4 |
+| 繁茂恶地 | Wooded Badlands | 4 |
 | 红树林沼泽 | Mangrove Swamp | 5 |
 | 溶洞 | Dripstone Caves | 5 |
 | 裸岩山峰 | Stony Peaks | 5 |
@@ -133,7 +135,7 @@
 | **K** | 打开规则书（玩法指南） |
 | **P** | 打开积分映射书（结构/群系分值） |
 | **U** | 打开竞速进度书（本队进度 / 未找到的群系） |
-| **L** | 打开语言选择界面（简体中文 / English） |
+| **Y** | 打开语言选择界面（简体中文 / English） |
 
 > 可在「选项 → 控制 → 按键绑定 → 结构竞速」中修改。
 
@@ -171,7 +173,7 @@
 
 ## 🌐 Language / 语言
 
-- 支持 **简体中文** 与 **English**，通过快捷键 **L**、`/language` 指令或大厅语言界面切换；
+- 支持 **简体中文** 与 **English**，通过快捷键 **Y**、大厅中的**语言选择器（下界之星）**、`/language` 指令随时切换；
 - 语言选择会**持久化到存档**，重进游戏仍保留；
 - 规则书、积分映射书、进度书、聊天、广播、title、指令反馈均按玩家语言显示。
 
@@ -180,7 +182,7 @@
 ## 📥 Installation / 安装
 
 1. 安装 [Fabric Loader](https://fabricmc.net/use/)（≥ 0.15.11）与 [Fabric API](https://modrinth.com/mod/fabric-api)（0.92.0+1.20.1）；
-2. 将 `structure_race_v2-2.8.0.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
+2. 将 `structure_race-2.8.0.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
 3. 启动游戏，进入任意存档即可开始。
 
 ---
@@ -193,7 +195,7 @@ cd structure_race
 gradlew build
 ```
 
-构建产物位于 `build/libs/structure_race_v2-<version>.jar`。
+构建产物位于 `build/libs/structure_race-<version>.jar`。
 
 **环境**：JDK 17 · Minecraft 1.20.1 · Yarn mappings · Fabric Loom 1.5
 
@@ -205,9 +207,9 @@ gradlew build
 
 - 获胜条件（`WIN_SCORE` / `MATCH_DURATION_SECONDS`）
 - 检测参数（积分冷却、群系检测间隔）
-- 迷路指引（3 分钟无发现 / 7 分钟冷却 / 检索半径）
-- 进服等待时长（10 秒）、开赛倒计时（5 秒）
-- 结构/群系分值映射、中文/英文名称映射
+- 迷路指引（3 分钟未找到结构 / 7 分钟冷却 / 检索半径）
+- 进服等待时长（3 秒）、开赛倒计时（5 秒）
+- 结构/群系分值映射、中文/英文名称映射、反超提醒阈值（40 分）
 
 ---
 

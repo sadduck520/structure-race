@@ -53,8 +53,8 @@ public final class StructureRaceConfig {
     /** 计分板目标（Objective）的内部名称 */
     public static final String SCOREBOARD_OBJECTIVE_NAME = "race_score";
 
-    /** 计分板显示名称（Sidebar 顶部标题） */
-    public static final String SCOREBOARD_DISPLAY_NAME = "§6Structure Race / 结构竞速§r";
+    /** 计分板显示名称（Sidebar 顶部标题；MC 计分板标题为单行，尽量精简） */
+    public static final String SCOREBOARD_DISPLAY_NAME = "§6Structure Race§r";
 
     // ==================== 检测参数 ====================
 
@@ -308,11 +308,11 @@ public final class StructureRaceConfig {
     private static Map<RegistryKey<Structure>, Integer> createStructureScores() {
         Map<RegistryKey<Structure>, Integer> map = new LinkedHashMap<>();
         // === 主世界 - 地表常见 ===
-        map.put(structKey("village_plains"), 5);
-        map.put(structKey("village_desert"), 5);
-        map.put(structKey("village_savanna"), 5);
-        map.put(structKey("village_snowy"), 5);
-        map.put(structKey("village_taiga"), 5);
+        map.put(structKey("village_plains"), 6);
+        map.put(structKey("village_desert"), 6);
+        map.put(structKey("village_savanna"), 6);
+        map.put(structKey("village_snowy"), 6);
+        map.put(structKey("village_taiga"), 6);
         map.put(structKey("desert_pyramid"), 8);
         map.put(structKey("igloo"), 12);
         map.put(structKey("swamp_hut"), 12);
@@ -320,16 +320,16 @@ public final class StructureRaceConfig {
         map.put(structKey("jungle_pyramid"), 12);
 
         // === 主世界 - 破损传送门（所有变体） ===
-        map.put(structKey("ruined_portal"), 3);
-        map.put(structKey("ruined_portal_desert"), 3);
-        map.put(structKey("ruined_portal_jungle"), 3);
-        map.put(structKey("ruined_portal_mountain"), 3);
-        map.put(structKey("ruined_portal_ocean"), 3);
-        map.put(structKey("ruined_portal_swamp"), 3);
+        map.put(structKey("ruined_portal"), 4);
+        map.put(structKey("ruined_portal_desert"), 4);
+        map.put(structKey("ruined_portal_jungle"), 4);
+        map.put(structKey("ruined_portal_mountain"), 4);
+        map.put(structKey("ruined_portal_ocean"), 4);
+        map.put(structKey("ruined_portal_swamp"), 4);
 
         // === 主世界 - 地下 ===
         map.put(structKey("mineshaft"), 10);
-        map.put(structKey("mineshaft_mesa"), 6);
+        map.put(structKey("mineshaft_mesa"), 5);
         map.put(structKey("stronghold"), 30);
         map.put(structKey("ancient_city"), 25);
         map.put(structKey("trail_ruins"), 12);
@@ -340,7 +340,7 @@ public final class StructureRaceConfig {
         map.put(structKey("ocean_ruin_cold"), 3);
         map.put(structKey("ocean_ruin_warm"), 3);
         map.put(structKey("buried_treasure"), 6);
-        map.put(structKey("monument"), 10);         // 海底神殿
+        map.put(structKey("monument"), 9);         // 海底神殿
 
         // === 主世界 - 罕见 ===
         map.put(structKey("mansion"), 50);           // 林地府邸
@@ -352,7 +352,7 @@ public final class StructureRaceConfig {
         map.put(structKey("ruined_portal_nether"), 3);
 
         // === 末地 ===
-        map.put(structKey("end_city"), 40);
+        map.put(structKey("end_city"), 30);
 
         return Collections.unmodifiableMap(map);
     }
@@ -378,8 +378,8 @@ public final class StructureRaceConfig {
         map.put(biomeKey("bamboo_jungle"), 5);
         map.put(biomeKey("sparse_jungle"), 3);
         map.put(biomeKey("badlands"), 5);
-        map.put(biomeKey("eroded_badlands"), 5);
-        map.put(biomeKey("wooded_badlands"), 5);
+        map.put(biomeKey("eroded_badlands"), 4);
+        map.put(biomeKey("wooded_badlands"), 4);
         map.put(biomeKey("mushroom_fields"), 20);
         map.put(biomeKey("ice_spikes"), 8);
         map.put(biomeKey("mangrove_swamp"), 5);
@@ -424,6 +424,9 @@ public final class StructureRaceConfig {
     /** 队伍选择器（指南针）的 NBT 标记键 */
     public static final String TEAM_SELECTOR_TAG = "structure_race:team_selector";
 
+    /** 语言选择器（下界之星）的 NBT 标记键 */
+    public static final String LANGUAGE_SELECTOR_TAG = "structure_race:language_selector";
+
     /** 迷路指引：最近结构距离小于该值（格）时不做提示 */
     public static final int HINT_MIN_DISTANCE = 100;
 
@@ -439,8 +442,8 @@ public final class StructureRaceConfig {
     /** 迷路指引：提示后个人冷却（tick，7 分钟），冷却结束后重新开始 3 分钟计时 */
     public static final long HINT_COOLDOWN_TICKS = 420L * 20L;
 
-    /** 玩家进服后先在主世界地底等待加载的时长（tick，10 秒），随后传送至大厅 */
-    public static final int JOIN_WAIT_TICKS = 200;
+    /** 玩家进服后先在主世界地底等待加载的时长（tick，3 秒），随后传送至大厅 */
+    public static final int JOIN_WAIT_TICKS = 60;
 
     /** /race start 后开赛倒计时（tick，5 秒），倒计时结束后才传送/清背包/开赛 */
     public static final int START_COUNTDOWN_TICKS = 100;
@@ -544,6 +547,7 @@ public final class StructureRaceConfig {
                 + "§1K§r 规则书\n"
                 + "§1P§r 积分映射\n"
                 + "§1U§r 竞速进度\n"
+                + "§1Y§r 切换语言\n"
                 + "可在按键设置中修改\n"
                 + "§l【聊天】§r\n"
                 + "比赛时普通消息仅\n"
@@ -592,14 +596,10 @@ public final class StructureRaceConfig {
         return pages;
     }
 
-    /** 英文规则书页面 */
+    /** 英文规则书页面（每页 ≤13 行、每行 ≤28 个半角字符，避免排版截断） */
     private static java.util.List<String> getRuleBookPagesEn() {
         java.util.List<String> pages = new java.util.ArrayList<>();
         pages.add("§l§nStructure Race - Guide§r\n"
-                + "Welcome to Structure Race!\n"
-                + "Teams explore and race to\n"
-                + "find structures and rare\n"
-                + "biomes to earn points.\n"
                 + "§l【Contents】§r\n"
                 + "1. Teams..........p.2\n"
                 + "2. Game Flow.......p.3\n"
@@ -607,7 +607,7 @@ public final class StructureRaceConfig {
                 + "4. Biome Pts.......p.5\n"
                 + "5. Other Points....p.6\n"
                 + "6. Commands........p.7\n"
-                + "7. Hotkeys.........p.8\n"
+                + "7. Hotkeys & Chat..p.8\n"
                 + "8. Mechanics.......p.9\n"
                 + "9. Win & Result....p.10\n"
                 + "10. Structure List.p.11");
@@ -617,14 +617,14 @@ public final class StructureRaceConfig {
                 + "the team GUI.\n"
                 + "Click a wool color to\n"
                 + "join that team. Click\n"
-                + "the barrier to become a\n"
-                + "spectator.\n"
+                + "the barrier to become\n"
+                + "a spectator.\n"
                 + "§1/race join <color>§r\n"
                 + "red, blue, yellow, orange\n"
                 + "green, white, black, purple");
         pages.add("§l2. Game Flow§r\n"
                 + "1. Form teams in lobby\n"
-                + "2. Admin runs §1/race start§r\n"
+                + "2. Admin runs /race start\n"
                 + "3. 5-sec countdown, then\n"
                 + "teleport to overworld\n"
                 + "spawn point\n"
@@ -634,7 +634,7 @@ public final class StructureRaceConfig {
                 + "to lobby in 10s with\n"
                 + "fireworks");
         pages.add("§l3. Structure Points§r\n"
-                + "§l【Discover to score】§r\n"
+                + "§l【Discover】§r\n"
                 + "First discovery of a\n"
                 + "target structure earns\n"
                 + "points for your team.\n"
@@ -648,19 +648,17 @@ public final class StructureRaceConfig {
                 + "First come, first served!");
         pages.add("§l4. Biome Points§r\n"
                 + "§l【Rules】§r\n"
-                + "Entering a target biome\n"
-                + "for the first time earns\n"
-                + "points. Biomes are NOT\n"
-                + "first-come; every team\n"
-                + "can earn separately.\n"
-                + "Already explored biomes\n"
-                + "give no more points.\n"
+                + "First time in a target\n"
+                + "biome earns points.\n"
+                + "Not first-come; each\n"
+                + "team can earn them\n"
+                + "separately. Explored\n"
+                + "biomes give no points.\n"
                 + "§l【Values】§r\n"
                 + "Mushroom Fields 20\n"
                 + "Deep Dark 15, Ice Spikes 8\n"
                 + "Swamp 5, Bamboo Jungle 5\n"
-                + "Full list: §1/race point§r\n"
-                + "or press §1P§r");
+                + "Full list: /race point");
         pages.add("§l5. Other Points§r\n"
                 + "§l【Distance】§r\n"
                 + "Walk/fly every 500 blocks\n"
@@ -676,37 +674,35 @@ public final class StructureRaceConfig {
                 + "Without map +30");
         pages.add("§l6. Commands§r\n"
                 + "§1/race join <color>§r\n"
-                + " join / switch team\n"
+                + "  join / switch team\n"
                 + "§1/race leave§r leave team\n"
                 + "§1/race time§r time left\n"
                 + "§1/race top§r rankings\n"
-                + "§1/race status§r status\n"
-                + "§1/race recall§r recall mate\n"
-                + " (costs 10 pts, 5 min cd)\n"
+                + "§1/race recall [player]§r\n"
+                + "  recall mate (10 pts)\n"
                 + "§1/race point§r point list\n"
                 + "§1/race progress§r progress\n"
-                + "§1/language§r change language");
+                + "§1/language§r language");
         pages.add("§l7. Hotkeys & Chat§r\n"
                 + "§1K§r guide book\n"
                 + "§1P§r point list\n"
                 + "§1U§r team progress\n"
-                + "§1L§r change language\n"
+                + "§1Y§r change language\n"
                 + "(rebindable in options)\n"
                 + "§l【Chat】§r\n"
                 + "During a match, normal\n"
                 + "chat is team-only.\n"
-                + "§1!§r prefix = global chat\n"
+                + "§1!§r prefix = global\n"
                 + "§l【Team lock】§r\n"
                 + "No team changes during\n"
                 + "a match; no team = spec");
         pages.add("§l8. Mechanics§r\n"
                 + "§l【Comeback】§r\n"
-                + "20+ pts behind the\n"
-                + "leader: everyone gets\n"
-                + "Speed I\n"
+                + "20+ pts behind leader:\n"
+                + "everyone gets Speed I\n"
                 + "§l【Lost guide】§r\n"
                 + "No discovery for 3 min\n"
-                + "auto-hints nearest\n"
+                + "auto-hints the nearest\n"
                 + "structure coords.\n"
                 + "7 min cooldown after\n"
                 + "each hint.\n"
@@ -715,30 +711,29 @@ public final class StructureRaceConfig {
                 + "as teleport (no points)");
         pages.add("§l9. Win & Result§r\n"
                 + "§l【Score mode】§r\n"
-                + "First to reach target\n"
-                + "score (default 100) wins\n"
+                + "First to target score\n"
+                + "(default 100) wins\n"
                 + "§l【Timer mode】§r\n"
                 + "Highest score when time\n"
                 + "runs out wins\n"
-                + "§1/race time§r for time left\n"
                 + "§l【Tie】§r\n"
                 + "Tied top score = draw\n"
                 + "§l【Result】§r\n"
                 + "Rankings shown; winners\n"
-                + "get a title; back to\n"
-                + "lobby in 10s + fireworks");
+                + "back to lobby in 10s\n"
+                + "+ fireworks");
         pages.add("§l10. Structure Points§r\n"
                 + "Ancient City 25, Bastion 18\n"
                 + "Mansion 30/50, End City 40\n"
                 + "Fortress 15, Stronghold 30\n"
                 + "Desert Pyramid 8, Igloo 12\n"
                 + "Witch Hut 12, Outpost 8\n"
-                + "Jungle Pyramid 12\n"
-                + "Trail Ruins 12, Mineshaft 10\n"
-                + "Mesa Mine 6, Monument 10\n"
-                + "Buried Treasure 6, Wreck 3/4\n"
-                + "Ocean Ruin 3, Ruined Portal 3\n"
-                + "Village 5, Nether Fossil 1");
+                + "Jungle Pyramid 12, Mine 10\n"
+                + "Trail Ruins 12, Mesa Mine 6\n"
+                + "Monument 10, Buried 6\n"
+                + "Wreck 3/4, Ocean Ruin 3\n"
+                + "Ruined Portal 3, Village 5\n"
+                + "Nether Fossil 1");
         return pages;
     }
 }

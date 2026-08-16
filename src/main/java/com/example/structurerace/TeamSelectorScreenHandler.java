@@ -15,7 +15,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 
 /**
- * 队伍选择器 GUI（类似箱子界面的单行容器，客户端用原版 GENERIC_9X1 渲染，无需额外客户端代码）。
+ * 队伍选择器 GUI（原版箱子界面 GENERIC_9X1，标题文字为黑色）。
  *
  * <p>槽位布局：
  * <ul>
@@ -34,11 +34,11 @@ public final class TeamSelectorScreenHandler extends GenericContainerScreenHandl
         super(ScreenHandlerType.GENERIC_9X1, syncId, playerInventory, createSelectorInventory(owner), 1);
     }
 
-    /** 为玩家打开队伍选择界面（物品名按玩家语言显示） */
+    /** 为玩家打开队伍选择界面（物品名按玩家语言显示，标题为黑色） */
     public static void open(ServerPlayerEntity player) {
         NamedScreenHandlerFactory factory = new SimpleNamedScreenHandlerFactory(
                 (syncId, inv, p) -> new TeamSelectorScreenHandler(syncId, inv, p, player),
-                Text.literal(Lang.get(player, "§6选择队伍 / 退出队伍", "§6Select Team / Leave Team")));
+                Text.literal(Lang.get(player, "§0选择队伍 / 退出队伍", "§0Select Team / Leave Team")));
         player.openHandledScreen(factory);
     }
 
