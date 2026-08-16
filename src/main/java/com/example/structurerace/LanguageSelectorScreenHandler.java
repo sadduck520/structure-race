@@ -40,7 +40,8 @@ public final class LanguageSelectorScreenHandler extends GenericContainerScreenH
     }
 
     private static Inventory createInventory(ServerPlayerEntity owner) {
-        SimpleInventory inv = new SimpleInventory(2);
+        // 必须与 GENERIC_9X1 的 9 个容器槽匹配（否则服务端构造时槽位越界，界面无法打开）
+        SimpleInventory inv = new SimpleInventory(9);
         boolean en = Lang.isEn(owner);
 
         ItemStack zh = new ItemStack(Items.NETHER_STAR);

@@ -43,8 +43,9 @@ public final class StructureRaceCommand {
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            // /race join /race leave /race recall 无需 OP（普通玩家可用）
+            // 注意：/race 只能注册一次（重复注册会覆盖根节点，导致玩家命令被 OP 限制污染）
             dispatcher.register(CommandManager.literal("race")
+                    // ===== 玩家命令（无需 OP）=====
                     .then(CommandManager.literal("join")
                             .then(CommandManager.argument("color", StringArgumentType.word())
                                     .executes(ctx -> join(ctx))))
@@ -57,29 +58,27 @@ public final class StructureRaceCommand {
                     .then(CommandManager.literal("recall")
                             .executes(ctx -> recall(ctx, ""))
                             .then(CommandManager.argument("player", StringArgumentType.word())
-                                    .executes(ctx -> recall(ctx, StringArgumentType.getString(ctx, "player"))))));
-
-            // /race 管理员命令组
-            dispatcher.register(CommandManager.literal("race")
-                    .requires(src -> src.hasPermissionLevel(2)) // 管理员权限
-                    .then(CommandManager.literal("start").executes(ctx -> start(ctx)))
-                    .then(CommandManager.literal("resume").executes(ctx -> resume(ctx)))
-                    .then(CommandManager.literal("stop").executes(ctx -> stop(ctx)))
-                    .then(CommandManager.literal("reset").executes(ctx -> reset(ctx)))
-                    .then(CommandManager.literal("mode")
+                                    .executes(ctx -> recall(ctx, StringArgumentType.getString(ctx, "player")))))
+                    // ===== 管理员命令（需要 OP 权限 2）=====
+                    .then(CommandManager.literal("start").requires(StructureRaceCommand::isOp).executes(ctx -> start(ctx)))
+                    .then(CommandManager.literal("resume").requires(StructureRaceCommand::isOp).executes(ctx -> resume(ctx)))
+                    .then(CommandManager.literal("stop").requires(StructureRaceCommand::isOp).executes(ctx -> stop(ctx)))
+                    .then(CommandManager.literal("reset").requires(StructureRaceCommand::isOp).executes(ctx -> reset(ctx)))
+                    .then(CommandManager.literal("mode").requires(StructureRaceCommand::isOp)
                             .then(CommandManager.argument("mode", StringArgumentType.word())
                                     .executes(ctx -> setMode(ctx))))
-                    .then(CommandManager.literal("config")
+                    .then(CommandManager.literal("config").requires(StructureRaceCommand::isOp)
                             .then(CommandManager.literal("winscore")
                                     .then(CommandManager.argument("score", IntegerArgumentType.integer(1))
                                             .executes(ctx -> setWinScore(ctx))))
                             .then(CommandManager.literal("duration")
                                     .then(CommandManager.argument("seconds", IntegerArgumentType.integer(1))
                                             .executes(ctx -> setDuration(ctx)))))
-                    .then(CommandManager.literal("status").executes(ctx -> status(ctx)))
-                    .then(CommandManager.literal("time").executes(ctx -> time(ctx)))
-                    .then(CommandManager.literal("top").executes(ctx -> top(ctx)))
-                    .then(CommandManager.literal("team")
+                    .then(CommandManager.literal("status").requires(StructureRaceCommand::isOp).executes(ctx -> status(ctx)))
+                    .then(CommandManager.literal("time").requires(StructureRaceCommand::isOp).executes(ctx -> time(ctx)))
+                    .then(CommandManager.literal("top").requires(StructureRaceCommand::isOp).executes(ctx -> top(ctx)))
+                    .then(CommandManager.literal("settings").requires(StructureRaceCommand::isOp).executes(ctx -> settings(ctx)))
+                    .then(CommandManager.literal("team").requires(StructureRaceCommand::isOp)
                             .then(CommandManager.literal("add")
                                     .then(CommandManager.argument("player", StringArgumentType.word())
                                             .then(CommandManager.argument("team", StringArgumentType.word())
@@ -104,6 +103,11 @@ public final class StructureRaceCommand {
             dispatcher.register(CommandManager.literal("lang")
                     .executes(ctx -> language(ctx)));
         });
+    }
+
+    /** 管理员权限判断（OP 2） */
+    private static boolean isOp(ServerCommandSource src) {
+        return src.hasPermissionLevel(2);
     }
 
     // ==================== 语言 ====================
@@ -154,6 +158,17 @@ public final class StructureRaceCommand {
     /** 双语错误反馈 */
     private static void sendErrL(CommandContext<ServerCommandSource> ctx, String zh, String en) {
         ctx.getSource().sendError(Text.literal(Lang.get(langOf(ctx), zh, en)));
+    }
+
+
+    private static int settings(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = playerOf(ctx);
+        if (player == null) {
+            sendErrL(ctx, "该指令必须由玩家执行。", "This command must be run by a player.");
+            return 0;
+        }
+        SettingsScreenHandler.open(player);
+        return 1;
     }
 
     private static int join(CommandContext<ServerCommandSource> ctx) {
