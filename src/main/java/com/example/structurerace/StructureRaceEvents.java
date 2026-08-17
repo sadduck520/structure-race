@@ -25,9 +25,6 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.CommandBlockBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.damage.DamageSource;
@@ -62,7 +59,6 @@ import net.minecraft.scoreboard.Team;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Properties;
 import net.minecraft.structure.StructureStart;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -70,7 +66,6 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.TypedActionResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
@@ -222,6 +217,18 @@ public final class StructureRaceEvents {
             if (stack.isOf(Items.NETHER_STAR) && stack.hasNbt()
                     && stack.getNbt().getBoolean(StructureRaceConfig.LANGUAGE_SELECTOR_TAG)) {
                 LanguageSelectorScreenHandler.open(sp);
+                return TypedActionResult.success(stack);
+            }
+            // 设置修改器：右键红石粉（带标记）打开比赛设置界面；仅管理员可用
+            if (stack.isOf(Items.REDSTONE) && stack.hasNbt()
+                    && stack.getNbt().getBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG)) {
+                if (sp.hasPermissionLevel(2)) {
+                    SettingsScreenHandler.open(sp);
+                } else {
+                    sp.sendMessage(Text.literal(Lang.get(sp,
+                            "§c你没有权限修改比赛设置（需要 OP 权限 2）。",
+                            "§cYou do not have permission to change match settings (OP 2 required).")), false);
+                }
                 return TypedActionResult.success(stack);
             }
             return TypedActionResult.pass(stack);
@@ -629,10 +636,9 @@ public final class StructureRaceEvents {
             placeBarrierWall(lobby, -half, i);
             placeBarrierWall(lobby, half - 1, i);
         }
-        // 生成「比赛设置站」：命令方块 + 按钮 + 告示牌说明，方便新玩家一键调整设置
-        setupLobbySettingStations(lobby);
+        // 比赛设置不再用命令方块站：管理员通过背包中的红石粉「设置修改器」或 /race settings 调整
         lobbyInitialized = true;
-        LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={}，含隐形屏障墙与设置站)",
+        LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={}，含隐形屏障墙)",
                 LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_Y);
     }
 
@@ -646,46 +652,9 @@ public final class StructureRaceEvents {
     }
 
     /**
-     * 在平台上生成一排「比赛设置站」：命令方块（预置命令）+ 按钮（触发）+ 告示牌（说明）。
-     * 点击按钮即可切换获胜模式/调整分数与时长/开始比赛，无需记忆指令。
+     * 比赛设置已不再使用命令方块站：管理员可在大厅用背包中的「设置修改器（红石粉）」右键打开设置界面
+     * （等价于 /race settings），或直接输入 /race settings；获胜分数按 ±25 分、限时时长按 ±10 分钟步进调整。
      */
-    private static void setupLobbySettingStations(ServerWorld lobby) {
-        int y = LOBBY_PLATFORM_Y + 1; // 65
-        String[][] stations = {
-                {"race mode score", "§e积分制", "获胜模式：先到目标分"},
-                {"race mode timer", "§e限时制", "获胜模式：时间到最高分"},
-                {"race config winscore 100", "§e获胜分 100", "积分制目标分设为 100"},
-                {"race config winscore 150", "§e获胜分 150", "积分制目标分设为 150"},
-                {"race config duration 1800", "§e限时 30 分钟", "限时制时长设为 30 分钟"},
-                {"race start", "§e开始比赛", "5 秒倒计时后开赛"}
-        };
-        int x = -10;
-        for (String[] st : stations) {
-            BlockPos cmdPos = new BlockPos(x, y, -6);
-            lobby.setBlockState(cmdPos, Blocks.COMMAND_BLOCK.getDefaultState());
-            if (lobby.getBlockEntity(cmdPos) instanceof CommandBlockBlockEntity cb) {
-                cb.getCommandExecutor().setCommand(st[0]);
-                cb.setAuto(false); // 非循环，按钮触发一次
-                cb.markDirty();
-            }
-            // 按钮：命令方块 +z 侧，面向命令方块（北）
-            BlockPos btnPos = new BlockPos(x, y, -5);
-            lobby.setBlockState(btnPos, Blocks.STONE_BUTTON.getDefaultState()
-                    .with(Properties.FACING, Direction.NORTH));
-            // 告示牌：命令方块 -z 侧，面向平台中心（南）
-            BlockPos signPos = new BlockPos(x, y, -7);
-            lobby.setBlockState(signPos, Blocks.OAK_WALL_SIGN.getDefaultState()
-                    .with(Properties.FACING, Direction.SOUTH));
-            if (lobby.getBlockEntity(signPos) instanceof SignBlockEntity sign) {
-                SignText newText = sign.getFrontText()
-                        .withMessage(0, Text.literal(st[1]))
-                        .withMessage(1, Text.literal("§7" + st[2]));
-                sign.setText(newText, true);
-                sign.markDirty();
-            }
-            x += 4;
-        }
-    }
 
     /** 传送玩家到大厅玻璃平台中心 */
     private static void teleportToLobby(ServerPlayerEntity player) {
@@ -790,7 +759,7 @@ public final class StructureRaceEvents {
 
     // ==================== 大厅装备（选队指南针 + 规则书） ====================
 
-    /** 准备阶段：确保玩家持有选队指南针、语言选择器与规则书，且为冒险模式（防丢：每 2 秒补发一次） */
+    /** 准备阶段：确保玩家持有选队指南针、语言选择器、规则书，管理员另有设置修改器；且为冒险模式（防丢：每 2 秒补发一次） */
     private static void ensureLobbyGear(ServerPlayerEntity player) {
         if (player.getServerWorld().getRegistryKey() != LOBBY_KEY) return;
         giveSaturation(player); // 大厅玩家保持饱和（不饥饿）
@@ -798,6 +767,7 @@ public final class StructureRaceEvents {
         boolean hasCompass = false;
         boolean hasBook = false;
         boolean hasLang = false;
+        boolean hasSettings = false;
         for (int i = 0; i < inv.size(); i++) {
             ItemStack s = inv.getStack(i);
             if (s.isOf(Items.COMPASS) && s.hasNbt()
@@ -812,10 +782,26 @@ public final class StructureRaceEvents {
                     && s.getNbt().getBoolean(StructureRaceConfig.LANGUAGE_SELECTOR_TAG)) {
                 hasLang = true;
             }
+            if (s.isOf(Items.REDSTONE) && s.hasNbt()
+                    && s.getNbt().getBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG)) {
+                hasSettings = true;
+            }
         }
         if (!hasCompass) inv.offerOrDrop(createTeamSelector(player));
         if (!hasBook) inv.offerOrDrop(createRuleBook(player));
         if (!hasLang) inv.offerOrDrop(createLanguageSelector(player));
+        // 设置修改器（红石粉）仅管理员（OP2）持有；普通玩家若持有则移除
+        if (player.hasPermissionLevel(2)) {
+            if (!hasSettings) inv.offerOrDrop(createSettingsSelector(player));
+        } else {
+            for (int i = 0; i < inv.size(); i++) {
+                ItemStack s = inv.getStack(i);
+                if (s.isOf(Items.REDSTONE) && s.hasNbt()
+                        && s.getNbt().getBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG)) {
+                    inv.setStack(i, ItemStack.EMPTY);
+                }
+            }
+        }
         if (player.interactionManager.getGameMode() != GameMode.ADVENTURE) {
             player.changeGameMode(GameMode.ADVENTURE);
         }
@@ -845,8 +831,20 @@ public final class StructureRaceEvents {
         return stack;
     }
 
+    /** 创建设置修改器（带 NBT 标记的红石粉；管理员专用，右键打开比赛设置界面，等价 /race settings） */
+    public static ItemStack createSettingsSelector(ServerPlayerEntity player) {
+        ItemStack stack = new ItemStack(Items.REDSTONE);
+        NbtCompound nbt = new NbtCompound();
+        nbt.putBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG, true);
+        nbt.putString("structure_race:item", "settings_selector");
+        stack.setNbt(nbt);
+        stack.setCustomName(Text.literal(Lang.get(player,
+                "§d设置修改器 §7(右键打开比赛设置)", "§dSettings Editor §7(right-click)")));
+        return stack;
+    }
+
     /**
-     * 大厅保护物品判断：队伍选择器 / 规则书 / 语言选择器。
+     * 大厅保护物品判断：队伍选择器 / 规则书 / 语言选择器 / 设置修改器。
      * 这些物品不可丢弃；丢出时会被 DROP_ITEM 拦截，并清除意外生成的掉落物后自动补发。
      */
     public static boolean isProtectedLobbyItem(ItemStack stack) {
@@ -855,6 +853,8 @@ public final class StructureRaceEvents {
                 && stack.getNbt().getBoolean(StructureRaceConfig.TEAM_SELECTOR_TAG)) return true;
         if (stack.isOf(Items.NETHER_STAR) && stack.hasNbt()
                 && stack.getNbt().getBoolean(StructureRaceConfig.LANGUAGE_SELECTOR_TAG)) return true;
+        if (stack.isOf(Items.REDSTONE) && stack.hasNbt()
+                && stack.getNbt().getBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG)) return true;
         if (stack.isOf(Items.WRITTEN_BOOK) && stack.hasNbt()
                 && "structure_race".equals(stack.getNbt().getString("author"))) return true;
         return false;
@@ -1252,17 +1252,22 @@ public final class StructureRaceEvents {
         player.sendMessage(Text.literal(message), true);
     }
 
-    /** 进入大厅后的消息栏提醒：Tab 查看组队 + 常用指令引导 */
+    /** 进入大厅后的消息栏提醒：Tab 查看组队 + 快捷键与常用指令引导 */
     private static void sendLobbyHint(ServerPlayerEntity player) {
         player.sendMessage(Text.literal(Lang.get(player,
-                "§7提示：按 §eTab§7 键查看组队情况",
-                "§7Tip: press §eTab§7 to view teams")), false);
+                "§7提示：按 §eTab§7 查看组队 · 右键 §e指南针§r 选队 · §e下界之星§r 语言",
+                "§7Tip: §eTab§7 teams · right-click §ecompass§r pick team · §eN. star§r lang")), false);
         player.sendMessage(Text.literal(Lang.get(player,
-                "§7常用指令：§e/race join <颜色>§r 组队 · §e/race point§r 积分 · §e/race progress§r 进度",
-                "§7Commands: §e/race join <color>§r team · §e/race point§r points · §e/race progress§r progress")), false);
+                "§7快捷键：§eK§r 规则书 · §eP§r 积分映射 · §eU§r 进度 · §eY§r 语言",
+                "§7Hotkeys: §eK§r guide · §eP§r points · §eU§r progress · §eY§r language")), false);
         player.sendMessage(Text.literal(Lang.get(player,
-                "§7其他：§e/race recall§r 召回 · §eY§r 语言 · §e/race stats§r 已移除 → §e/race top§r 排名 · 管理员可用 §e/race settings§r",
-                "§7More: §e/race recall§r recall · §eY§r language · §e/race top§r ranking · Admin: §e/race settings§r")), false);
+                "§7指令：§e/race start§r 开始比赛 · §e/race settings§r 修改设置 · §e/race status§r 查看状态",
+                "§7Commands: §e/race start§r start · §e/race settings§r settings · §e/race status§r status")), false);
+        if (player.hasPermissionLevel(2)) {
+            player.sendMessage(Text.literal(Lang.get(player,
+                    "§7管理员：右键背包中的 §d红石粉§r 可打开比赛设置界面",
+                    "§7Admin: right-click the §dredstone§r item to open match settings")), false);
+        }
     }
 
     /** 向所有在线玩家广播双语文本（按各自语言） */

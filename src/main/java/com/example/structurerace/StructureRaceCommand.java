@@ -59,6 +59,11 @@ public final class StructureRaceCommand {
                             .executes(ctx -> recall(ctx, ""))
                             .then(CommandManager.argument("player", StringArgumentType.word())
                                     .executes(ctx -> recall(ctx, StringArgumentType.getString(ctx, "player")))))
+                    // 查询类命令（公开竞技信息，无需 OP）：排行榜 / 剩余时间
+                    .then(CommandManager.literal("top")
+                            .executes(ctx -> top(ctx)))
+                    .then(CommandManager.literal("time")
+                            .executes(ctx -> time(ctx)))
                     // ===== 管理员命令（需要 OP 权限 2）=====
                     .then(CommandManager.literal("start").requires(StructureRaceCommand::isOp).executes(ctx -> start(ctx)))
                     .then(CommandManager.literal("resume").requires(StructureRaceCommand::isOp).executes(ctx -> resume(ctx)))
@@ -75,8 +80,6 @@ public final class StructureRaceCommand {
                                     .then(CommandManager.argument("seconds", IntegerArgumentType.integer(1))
                                             .executes(ctx -> setDuration(ctx)))))
                     .then(CommandManager.literal("status").requires(StructureRaceCommand::isOp).executes(ctx -> status(ctx)))
-                    .then(CommandManager.literal("time").requires(StructureRaceCommand::isOp).executes(ctx -> time(ctx)))
-                    .then(CommandManager.literal("top").requires(StructureRaceCommand::isOp).executes(ctx -> top(ctx)))
                     .then(CommandManager.literal("settings").requires(StructureRaceCommand::isOp).executes(ctx -> settings(ctx)))
                     .then(CommandManager.literal("team").requires(StructureRaceCommand::isOp)
                             .then(CommandManager.literal("add")

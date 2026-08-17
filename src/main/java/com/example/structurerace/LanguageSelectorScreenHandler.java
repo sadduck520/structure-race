@@ -75,6 +75,9 @@ public final class LanguageSelectorScreenHandler extends GenericContainerScreenH
                     } else if (s.isOf(Items.NETHER_STAR) && s.hasNbt()
                             && s.getNbt().getBoolean(StructureRaceConfig.LANGUAGE_SELECTOR_TAG)) {
                         sp.getInventory().setStack(i, ItemStack.EMPTY);
+                    } else if (s.isOf(Items.REDSTONE) && s.hasNbt()
+                            && s.getNbt().getBoolean(StructureRaceConfig.SETTINGS_SELECTOR_TAG)) {
+                        sp.getInventory().setStack(i, ItemStack.EMPTY);
                     }
                 }
                 sp.currentScreenHandler.sendContentUpdates();

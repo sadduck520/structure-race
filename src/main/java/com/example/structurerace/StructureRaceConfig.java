@@ -427,6 +427,9 @@ public final class StructureRaceConfig {
     /** 语言选择器（下界之星）的 NBT 标记键 */
     public static final String LANGUAGE_SELECTOR_TAG = "structure_race:language_selector";
 
+    /** 设置修改器（红石粉，管理员专用）的 NBT 标记键 */
+    public static final String SETTINGS_SELECTOR_TAG = "structure_race:settings_selector";
+
     /** 迷路指引：最近结构距离小于该值（格）时不做提示 */
     public static final int HINT_MIN_DISTANCE = 100;
 
@@ -533,16 +536,18 @@ public final class StructureRaceConfig {
                 + "携带探险家地图+50\n"
                 + "无地图+30");
         pages.add("§l⑥ 常用指令§r\n"
-                + "§1/race join <颜色>§r\n"
-                + "加入/切换队伍\n"
-                + "§1/race leave§r 离队\n"
-                + "§1/race time§r 剩余时间\n"
+                + "§l【玩家】§r\n"
                 + "§1/race top§r 队伍排名\n"
-                + "§1/race status§r 状态\n"
+                + "§1/race time§r 剩余时间\n"
                 + "§1/race recall§r 召回队友\n"
                 + "（耗10分，冷却5分钟）\n"
-                + "§1/race point§r 积分映射\n"
-                + "§1/race progress§r 进度");
+                + "§1/race leave§r 离队\n"
+                + "§l【管理员】§r\n"
+                + "§1/race start§r 开始比赛\n"
+                + "§1/race settings§r 设置界面\n"
+                + "§1/race status§r 比赛状态\n"
+                + "组队请用队伍选择器\n"
+                + "（右键指南针）");
         pages.add("§l⑦ 快捷键§r\n"
                 + "§1K§r 规则书\n"
                 + "§1P§r 积分映射\n"
@@ -573,14 +578,15 @@ public final class StructureRaceConfig {
                 + "率先达到目标分数\n"
                 + "（默认100）获胜。\n"
                 + "§l【限时制】§r\n"
-                + "时间到得分最高获胜；\n"
-                + "§1/race time§r 查剩余。\n"
+                + "时间到得分最高获胜\n"
+                + "§1/race time§r 查剩余\n"
                 + "§l【平局】§r\n"
-                + "多队同分并列判平局。\n"
+                + "多队同分并列判平局\n"
                 + "§l【结算】§r\n"
-                + "公布各队排名，胜利\n"
-                + "队显示恭喜获胜；\n"
-                + "10秒后回大厅放烟花。");
+                + "公布排名，胜利队\n"
+                + "10秒后回大厅放烟花\n"
+                + "§l【荣誉】⭐赛后§r\n"
+                + "展示玩家荣誉榜");
         pages.add("§l⑩ 结构分值一览§r\n"
                 + "远古城市25 堡垒遗迹18\n"
                 + "林地府邸30/50 末地城40\n"
@@ -673,16 +679,18 @@ public final class StructureRaceConfig {
                 + "With explorer map +50\n"
                 + "Without map +30");
         pages.add("§l6. Commands§r\n"
-                + "§1/race join <color>§r\n"
-                + "  join / switch team\n"
-                + "§1/race leave§r leave team\n"
-                + "§1/race time§r time left\n"
+                + "§l【Players】§r\n"
                 + "§1/race top§r rankings\n"
-                + "§1/race recall [player]§r\n"
+                + "§1/race time§r time left\n"
+                + "§1/race recall [p]§r\n"
                 + "  recall mate (10 pts)\n"
-                + "§1/race point§r point list\n"
-                + "§1/race progress§r progress\n"
-                + "§1/language§r language");
+                + "§1/race leave§r leave team\n"
+                + "§l【Admin】§r\n"
+                + "§1/race start§r start match\n"
+                + "§1/race settings§r settings GUI\n"
+                + "§1/race status§r match status\n"
+                + "Join teams with the\n"
+                + "compass (team selector)");
         pages.add("§l7. Hotkeys & Chat§r\n"
                 + "§1K§r guide book\n"
                 + "§1P§r point list\n"
@@ -719,9 +727,9 @@ public final class StructureRaceConfig {
                 + "§l【Tie】§r\n"
                 + "Tied top score = draw\n"
                 + "§l【Result】§r\n"
-                + "Rankings shown; winners\n"
-                + "back to lobby in 10s\n"
-                + "+ fireworks");
+                + "Rankings + ⭐honors shown;\n"
+                + "winners back to lobby\n"
+                + "in 10s + fireworks");
         pages.add("§l10. Structure Points§r\n"
                 + "Ancient City 25, Bastion 18\n"
                 + "Mansion 30/50, End City 40\n"

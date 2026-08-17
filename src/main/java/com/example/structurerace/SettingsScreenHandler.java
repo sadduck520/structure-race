@@ -16,11 +16,11 @@ import net.minecraft.text.Text;
 
 /**
  * 管理员比赛设置 GUI（原版箱子界面 GENERIC_9X1，标题黑色）。
- * 通过 {@code /race settings}（OP）在大厅打开，无需记忆指令即可调整：
+ * 通过 {@code /race settings}（OP）或大厅中的「设置修改器（红石粉）」（OP）打开，无需记忆指令即可调整：
  * <ul>
  *   <li>槽 0：切换获胜模式（积分制 / 限时制）</li>
- *   <li>槽 1/2：获胜分数 +10 / -10</li>
- *   <li>槽 3/4：限时时长 +5 分钟 / -5 分钟</li>
+ *   <li>槽 1/2：获胜分数 +25 / -25</li>
+ *   <li>槽 3/4：限时时长 +10 分钟 / -10 分钟</li>
  *   <li>槽 5：当前配置说明（只读）</li>
  *   <li>槽 6：关闭</li>
  * </ul>
@@ -60,19 +60,19 @@ public final class SettingsScreenHandler extends GenericContainerScreenHandler {
         inv.setStack(0, mode);
 
         ItemStack plusScore = new ItemStack(Items.GREEN_DYE);
-        plusScore.setCustomName(Text.literal(en ? "§aWin Score +10" : "§a获胜分数 +10"));
+        plusScore.setCustomName(Text.literal(en ? "§aWin Score +25" : "§a获胜分数 +25"));
         inv.setStack(1, plusScore);
 
         ItemStack minusScore = new ItemStack(Items.RED_DYE);
-        minusScore.setCustomName(Text.literal(en ? "§cWin Score -10" : "§c获胜分数 -10"));
+        minusScore.setCustomName(Text.literal(en ? "§cWin Score -25" : "§c获胜分数 -25"));
         inv.setStack(2, minusScore);
 
         ItemStack plusTime = new ItemStack(Items.LIME_DYE);
-        plusTime.setCustomName(Text.literal(en ? "§aTimer +5 min" : "§a限时时长 +5 分钟"));
+        plusTime.setCustomName(Text.literal(en ? "§aTimer +10 min" : "§a限时时长 +10 分钟"));
         inv.setStack(3, plusTime);
 
         ItemStack minusTime = new ItemStack(Items.ORANGE_DYE);
-        minusTime.setCustomName(Text.literal(en ? "§cTimer -5 min" : "§c限时时长 -5 分钟"));
+        minusTime.setCustomName(Text.literal(en ? "§cTimer -10 min" : "§c限时时长 -10 分钟"));
         inv.setStack(4, minusTime);
 
         ItemStack info = new ItemStack(Items.PAPER);
@@ -107,14 +107,14 @@ public final class SettingsScreenHandler extends GenericContainerScreenHandler {
             if (slotIndex == 0) {
                 StructureRaceEvents.setWinCondition(sp.getServer(), timer ? "score" : "timer");
             } else if (slotIndex == 1) {
-                StructureRaceEvents.setWinScore(sp.getServer(), state.winScore + 10);
+                StructureRaceEvents.setWinScore(sp.getServer(), state.winScore + 25);
             } else if (slotIndex == 2) {
-                StructureRaceEvents.setWinScore(sp.getServer(), state.winScore - 10);
+                StructureRaceEvents.setWinScore(sp.getServer(), state.winScore - 25);
             } else if (slotIndex == 3) {
                 StructureRaceEvents.setMatchDuration(sp.getServer(),
-                        (int) (state.matchDurationTicks / 20) + 300);
+                        (int) (state.matchDurationTicks / 20) + 600);
             } else if (slotIndex == 4) {
-                int sec = Math.max(60, (int) (state.matchDurationTicks / 20) - 300);
+                int sec = Math.max(60, (int) (state.matchDurationTicks / 20) - 600);
                 StructureRaceEvents.setMatchDuration(sp.getServer(), sec);
             }
             // 刷新界面以显示最新配置
