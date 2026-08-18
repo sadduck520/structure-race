@@ -562,7 +562,7 @@ public final class StructureRaceEvents {
             player.changeGameMode(GameMode.ADVENTURE);
             ensureLobbyGear(player);
             if (firstJoin) {
-                // 首次进服：先到主世界地底等待点加载世界数据（约 5 秒），再进大厅，
+                // 首次进服：先到主世界地底等待点加载世界数据（约 4 秒），再进大厅，
                 // 避免「主世界区块尚未生成完就跨维度传送到大厅」导致维度数据串台
                 state.pendingLobby = true;
                 state.joinTicks = 0;
@@ -981,7 +981,7 @@ public final class StructureRaceEvents {
                 pages.add(sb.toString());
                 sb = new StringBuilder(Lang.get(player, "§l① 结构分值(续)§r\n", "§l1. Structures (cont.)§r\n"));
             }
-            sb.append(name).append(' ').append(score).append('\n');
+            sb.append(fitLine(name, 15)).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
@@ -995,7 +995,7 @@ public final class StructureRaceEvents {
                 pages.add(sb.toString());
                 sb = new StringBuilder(Lang.get(player, "§l② 群系分值(续)§r\n", "§l2. Biomes (cont.)§r\n"));
             }
-            sb.append(name).append(' ').append(score).append('\n');
+            sb.append(fitLine(name, 15)).append(' ').append(score).append('\n');
             count++;
         }
         pages.add(sb.toString());
@@ -1042,7 +1042,7 @@ public final class StructureRaceEvents {
             int c = 0;
             for (Map.Entry<String, Integer> e : structCount.entrySet()) {
                 String name = Lang.structName(player, e.getKey());
-                sb.append(name).append(" x").append(e.getValue()).append('\n');
+                sb.append(fitLine(name, 15)).append(" x").append(e.getValue()).append('\n');
                 if (++c % 12 == 0) {
                     pages.add(sb.toString());
                     sb = new StringBuilder("§l").append(en ? "[Structures (cont.)]" : "【已发现结构(续)】").append("§r\n");
@@ -1058,8 +1058,8 @@ public final class StructureRaceEvents {
             int c = 0;
             for (String id : team.discoveredBiomes) {
                 String name = Lang.biomeName(player, id);
-                sb.append(name).append('\n');
-                if (++c % 14 == 0) {
+                sb.append(fitLine(name, 15)).append('\n');
+                if (++c % 12 == 0) {
                     pages.add(sb.toString());
                     sb = new StringBuilder("§l").append(en ? "[Biomes (cont.)]" : "【已探索群系(续)】").append("§r\n");
                 }
@@ -1074,8 +1074,8 @@ public final class StructureRaceEvents {
             if (team.discoveredBiomes.contains(id)) continue;
             String name = Lang.biomeName(player, id);
             int score = StructureRaceConfig.BIOME_SCORES.get(key);
-            sb.append(name).append(' ').append(score).append('\n');
-            if (++c % 14 == 0) {
+            sb.append(fitLine(name, 15)).append(' ').append(score).append('\n');
+            if (++c % 12 == 0) {
                 pages.add(sb.toString());
                 sb = new StringBuilder("§l§n").append(en ? "Biomes (cont.)" : "未找到群系(续)").append("§r\n");
             }
@@ -1083,6 +1083,16 @@ public final class StructureRaceEvents {
         if (c == 0) sb.append(en ? "(all explored!)\n" : "（全部已探索！）\n");
         pages.add(sb.toString());
         openInfoBook(player, Lang.get(player, "竞速进度", "Progress"), pages);
+    }
+
+    /** 书页行宽适配：按显示宽度截断（全角按 2 个半角宽），超出部分以省略号收尾，避免写书页面截断 */
+    private static String fitLine(String s, int maxHalfWidth) {
+        int w = 0;
+        for (int i = 0; i < s.length(); i++) {
+            w += s.charAt(i) > 0xFF ? 2 : 1;
+            if (w > maxHalfWidth) return s.substring(0, i) + "…";
+        }
+        return s;
     }
 
 

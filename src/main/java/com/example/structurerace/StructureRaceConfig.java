@@ -252,6 +252,11 @@ public final class StructureRaceConfig {
         m.put("minecraft:snowy_plains", "积雪平原");
         m.put("minecraft:snowy_taiga", "积雪针叶林");
         m.put("minecraft:snowy_beach", "积雪沙滩");
+        // 下界群系
+        m.put("minecraft:basalt_deltas", "玄武岩三角洲");
+        m.put("minecraft:crimson_forest", "绯红森林");
+        m.put("minecraft:warped_forest", "诡异森林");
+        m.put("minecraft:soul_sand_valley", "灵魂沙峡谷");
         return m;
     }
 
@@ -293,6 +298,11 @@ public final class StructureRaceConfig {
         m.put("minecraft:snowy_plains", "Snowy Plains");
         m.put("minecraft:snowy_taiga", "Snowy Taiga");
         m.put("minecraft:snowy_beach", "Snowy Beach");
+        // 下界群系
+        m.put("minecraft:basalt_deltas", "Basalt Deltas");
+        m.put("minecraft:crimson_forest", "Crimson Forest");
+        m.put("minecraft:warped_forest", "Warped Forest");
+        m.put("minecraft:soul_sand_valley", "Soul Sand Valley");
         return m;
     }
 
@@ -405,6 +415,11 @@ public final class StructureRaceConfig {
         map.put(biomeKey("snowy_plains"), 4);
         map.put(biomeKey("snowy_taiga"), 4);
         map.put(biomeKey("snowy_beach"), 2);
+        // 下界群系
+        map.put(biomeKey("basalt_deltas"), 4);
+        map.put(biomeKey("crimson_forest"), 4);
+        map.put(biomeKey("warped_forest"), 4);
+        map.put(biomeKey("soul_sand_valley"), 3);
         return Collections.unmodifiableMap(map);
     }
 
@@ -445,8 +460,8 @@ public final class StructureRaceConfig {
     /** 迷路指引：提示后个人冷却（tick，7 分钟），冷却结束后重新开始 3 分钟计时 */
     public static final long HINT_COOLDOWN_TICKS = 420L * 20L;
 
-    /** 玩家进服后先在主世界地底等待加载的时长（tick，3 秒），随后传送至大厅 */
-    public static final int JOIN_WAIT_TICKS = 60;
+    /** 玩家进服后先在主世界地底等待加载的时长（tick，4 秒），随后传送至大厅 */
+    public static final int JOIN_WAIT_TICKS = 80;
 
     /** /race start 后开赛倒计时（tick，5 秒），倒计时结束后才传送/清背包/开赛 */
     public static final int START_COUNTDOWN_TICKS = 100;
@@ -514,14 +529,14 @@ public final class StructureRaceConfig {
                 + "首次踏入目标群系\n"
                 + "为队伍加分；群系\n"
                 + "不占有，每队可各自\n"
-                + "获得；已探索的\n"
-                + "群系不再加分。\n"
+                + "获得；已探索群系\n"
+                + "不再加分。\n"
                 + "§l【群系分值】§r\n"
                 + "蘑菇岛20 深暗之域15\n"
                 + "冰刺之地8 沼泽5\n"
                 + "竹林5 红树林5\n"
-                + "完整分值见§1/race point§r\n"
-                + "或按 §1P§r 键查看");
+                + "绯红4 诡异4 玄武岩4\n"
+                + "灵魂沙峡谷3 · 详见P");
         pages.add("§l⑤ 其他积分来源§r\n"
                 + "§l【里程】§r\n"
                 + "步行/飞行每500格+1分\n"
@@ -653,17 +668,16 @@ public final class StructureRaceConfig {
                 + "others get no points.\n"
                 + "First come, first served!");
         pages.add("§l4. Biome Points§r\n"
-                + "§l【Rules】§r\n"
                 + "First time in a target\n"
-                + "biome earns points.\n"
-                + "Not first-come; each\n"
-                + "team can earn them\n"
-                + "separately. Explored\n"
-                + "biomes give no points.\n"
+                + "biome earns points. Not\n"
+                + "first-come; each team\n"
+                + "can earn them separately.\n"
                 + "§l【Values】§r\n"
                 + "Mushroom Fields 20\n"
                 + "Deep Dark 15, Ice Spikes 8\n"
                 + "Swamp 5, Bamboo Jungle 5\n"
+                + "Crimson 4, Warped 4\n"
+                + "Basalt 4, Soul Sand 3\n"
                 + "Full list: /race point");
         pages.add("§l5. Other Points§r\n"
                 + "§l【Distance】§r\n"
