@@ -190,7 +190,7 @@
 ## 📥 Installation / 安装
 
 1. 安装 [Fabric Loader](https://fabricmc.net/use/)（≥ 0.15.11）与 [Fabric API](https://modrinth.com/mod/fabric-api)（0.92.0+1.20.1）；
-2. 将 `structure_race-2.13.0.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
+2. 将 `structure_race-2.14.0.jar` 放入 **mods** 文件夹（客户端与服务端都放，单机只需客户端）；
 3. 启动游戏，进入任意存档即可开始。
 
 ---

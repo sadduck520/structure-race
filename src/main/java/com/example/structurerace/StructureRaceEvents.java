@@ -547,7 +547,13 @@ public final class StructureRaceEvents {
         if (pd != null) {
             state.discoveredStructures.addAll(pd.discoveredStructures);
             state.discoveredBiomes.addAll(pd.discoveredBiomes);
-            state.totalScore = pd.totalScore;
+            state.personalScore = pd.personalScore;
+            state.totalDistance = pd.totalDistance;
+            state.structuresFound = pd.structuresFound;
+            state.structurePoints = pd.structurePoints;
+            state.bestEventNameZh = pd.bestEventNameZh;
+            state.bestEventNameEn = pd.bestEventNameEn;
+            state.bestEventPoints = pd.bestEventPoints;
             state.won = pd.won;
             state.killCount = pd.killCount;
             state.lastFindTime = pd.lastFindTime;
@@ -604,6 +610,17 @@ public final class StructureRaceEvents {
     }
 
     private static void onPlayerDisconnect(ServerPlayerEntity player) {
+        // 退出前把本局个人统计同步到持久化数据，确保重进后个人积分/荣誉不丢失
+        PlayerState state = PLAYER_STATES.get(player.getUuid());
+        if (state != null) {
+            try {
+                StructureRaceState saveState = StructureRaceState.get(player.getServer().getOverworld());
+                syncPlayerStats(saveState, player, state);
+                saveState.markDirty();
+            } catch (Exception e) {
+                LOGGER.warn("[StructureRace] 保存玩家 {} 本局统计失败: {}", player.getEntityName(), e.getMessage());
+            }
+        }
         // 移除内存状态：重进时从持久化数据干净重建，保证断线重连与服务器重启行为一致
         PLAYER_STATES.remove(player.getUuid());
         playerTeamMap.remove(player.getUuid());
@@ -1373,6 +1390,21 @@ public final class StructureRaceEvents {
         }
     }
 
+    /** 将玩家内存统计同步到持久化数据（各加分点与断线时调用），确保退出重进后个人积分/荣誉不丢失 */
+    private static void syncPlayerStats(StructureRaceState saveState, ServerPlayerEntity player, PlayerState state) {
+        StructureRaceState.PlayerPersistentData pd = saveState.getPlayerData(player.getUuid());
+        pd.personalScore = state.personalScore;
+        pd.totalDistance = state.totalDistance;
+        pd.structuresFound = state.structuresFound;
+        pd.structurePoints = state.structurePoints;
+        pd.killCount = state.killCount;
+        pd.won = state.won;
+        pd.lastFindTime = state.lastFindTime;
+        pd.bestEventNameZh = state.bestEventNameZh;
+        pd.bestEventNameEn = state.bestEventNameEn;
+        pd.bestEventPoints = state.bestEventPoints;
+    }
+
     // ==================== 机制1：跑图里程计分 ====================
 
     private static void trackDistance(ServerPlayerEntity player, StructureRaceState saveState) {
@@ -1393,11 +1425,13 @@ public final class StructureRaceEvents {
             if (dist < DISTANCE_TELEPORT_THRESHOLD) {
                 state.distanceAccumulator += dist;
                 state.totalDistance += dist; // 赛后荣誉：累计跑图距离
+                saveState.getPlayerData(player.getUuid()).totalDistance = state.totalDistance;
                 if (state.distanceAccumulator >= DISTANCE_PER_POINT) {
                     StructureRaceState.TeamData team = getPlayerTeam(saveState, player.getUuid());
                     if (team != null) {
                         team.totalScore += 1;
                         state.personalScore += 1;
+                        syncPlayerStats(saveState, player, state);
                         saveState.markDirty();
                         broadcastScore(player, team, "长途跋涉", "Long trek", 1, team.totalScore);
                         refreshTeamScoreboard(player.server, team);
@@ -1441,6 +1475,7 @@ public final class StructureRaceEvents {
         if (state.killCount % KILLS_PER_POINT == 0) {
             team.totalScore += 1;
             state.personalScore += 1; // 赛后荣誉：个人总分
+            syncPlayerStats(saveState, killer, state);
             saveState.markDirty();
             broadcastScore(killer, team, "消灭怪物浪潮", "Mob wave", 1, team.totalScore);
             refreshTeamScoreboard(killer.server, team);
@@ -1479,6 +1514,7 @@ public final class StructureRaceEvents {
 
         team.totalScore += score;
         state.personalScore += score; // 赛后荣誉：个人总分
+        syncPlayerStats(saveState, player, state);
         saveState.markDirty();
         String dimEn = "the_nether".equals(cur) ? "Nether" : "the End";
         updateBestEvent(state, "踏入" + dimName, "Entered " + dimEn, score);
@@ -1775,6 +1811,7 @@ public final class StructureRaceEvents {
             state.personalScore += finalScore;
             updateBestEvent(state, "发现" + structName, "Found " + structNameEn, finalScore);
             saveState.getPlayerData(player.getUuid()).lastFindTime = gameTime;
+            syncPlayerStats(saveState, player, state);
             saveState.markDirty();
 
             refreshTeamScoreboard(player.server, team);
@@ -1830,6 +1867,7 @@ public final class StructureRaceEvents {
         team.discoveredBiomes.add(biomeId);
         team.totalScore += scoreValue;
         state.personalScore += scoreValue; // 赛后荣誉：个人总分
+        syncPlayerStats(saveState, player, state);
         saveState.markDirty();
 
         refreshTeamScoreboard(player.server, team);
@@ -1960,7 +1998,7 @@ public final class StructureRaceEvents {
             LOGGER.info("[StructureRace] 比赛已在进行中，忽略重复 start。");
             return false;
         }
-        state.resetAllPlayers();
+        state.resetAllPlayerMatchStats(); // 新局：清空本局个人统计（保留语言偏好），避免跨局继承
         state.matchActive = true;
         state.matchStartTick = overworld.getTime(); // 先记录倒计时起点；正式开赛时由 executeMatchStart 重新记录
         for (StructureRaceState.TeamData t : state.getAllTeams().values()) {
@@ -2096,7 +2134,7 @@ public final class StructureRaceEvents {
 
     public static void resetMatch(MinecraftServer server) {
         StructureRaceState state = StructureRaceState.get(server.getOverworld());
-        state.resetAllPlayers();
+        state.resetAllPlayerMatchStats(); // 重置：清空本局个人统计（保留语言偏好）
         for (StructureRaceState.TeamData t : state.getAllTeams().values()) {
             t.totalScore = 0;
             t.discoveredStructures.clear();
@@ -2575,7 +2613,6 @@ public final class StructureRaceEvents {
         private String playerName;
         private final Set<String> discoveredStructures = new HashSet<>();
         private final Set<String> discoveredBiomes = new HashSet<>();
-        private int totalScore;
         private long lastScoreGameTime;
         private long lastBiomeCheckTime;
         private long lastFindTime; // 机制6：上次发现时间；提示后为「now + 7分钟」的未来值（实现个人冷却）

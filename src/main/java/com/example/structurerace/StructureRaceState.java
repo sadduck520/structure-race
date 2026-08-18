@@ -57,8 +57,22 @@ public final class StructureRaceState extends PersistentState {
         /** 已发现群系的注册名集合（格式："minecraft:desert"） */
         public final Set<String> discoveredBiomes = new HashSet<>();
 
-        /** 累计积分 */
-        public int totalScore;
+        /** 本局个人总积分（赛后荣誉：团队核心/个人贡献；退出重进保留，新局清零） */
+        public int personalScore;
+
+        /** 本局累计跑图距离（赛后荣誉：最远探索者；退出重进保留，新局清零） */
+        public double totalDistance;
+
+        /** 本局发现结构数量（赛后荣誉：结构发现大师） */
+        public int structuresFound;
+
+        /** 本局结构积分累计（赛后荣誉：珍稀发现者） */
+        public int structurePoints;
+
+        /** 本局单次最高得分事件（赛后荣誉：关键发现） */
+        public String bestEventNameZh;
+        public String bestEventNameEn;
+        public int bestEventPoints;
 
         /** 是否已获胜 */
         public boolean won;
@@ -158,6 +172,34 @@ public final class StructureRaceState extends PersistentState {
         playerData.clear();
     }
 
+    /**
+     * 新一局开始：清空所有玩家的「本局」统计数据（个人积分/距离/击杀/胜利/最佳事件等），
+     * 但保留 {@link #PlayerPersistentData.language} 等跨局偏好，避免开始新局后语言被清掉。
+     */
+    public void resetAllPlayerMatchStats() {
+        for (PlayerPersistentData d : playerData.values()) {
+            d.personalScore = 0;
+            d.totalDistance = 0;
+            d.structuresFound = 0;
+            d.structurePoints = 0;
+            d.bestEventNameZh = null;
+            d.bestEventNameEn = null;
+            d.bestEventPoints = 0;
+            d.won = false;
+            d.killCount = 0;
+            d.lastFindTime = 0;
+            d.discoveredStructures.clear();
+            d.discoveredBiomes.clear();
+        }
+        markDirty();
+    }
+
+    /** NBT 读字符串；键不存在或为空串返回 null（避免 \"\" 与 null 混淆） */
+    private static String nullableString(NbtCompound nbt, String key) {
+        String s = nbt.getString(key);
+        return s.isEmpty() ? null : s;
+    }
+
     // ==================== 队伍操作 ====================
 
     /** 创建新队伍（颜色自动按创建顺序循环分配） */
@@ -210,7 +252,17 @@ public final class StructureRaceState extends PersistentState {
         for (Map.Entry<UUID, PlayerPersistentData> entry : playerData.entrySet()) {
             NbtCompound p = new NbtCompound();
             p.putUuid("uuid", entry.getKey());
-            p.putInt("totalScore", entry.getValue().totalScore);
+            p.putInt("personalScore", entry.getValue().personalScore);
+            p.putDouble("totalDistance", entry.getValue().totalDistance);
+            p.putInt("structuresFound", entry.getValue().structuresFound);
+            p.putInt("structurePoints", entry.getValue().structurePoints);
+            if (entry.getValue().bestEventNameZh != null) {
+                p.putString("bestEventNameZh", entry.getValue().bestEventNameZh);
+            }
+            if (entry.getValue().bestEventNameEn != null) {
+                p.putString("bestEventNameEn", entry.getValue().bestEventNameEn);
+            }
+            p.putInt("bestEventPoints", entry.getValue().bestEventPoints);
             p.putBoolean("won", entry.getValue().won);
             p.putInt("killCount", entry.getValue().killCount);
             p.putLong("lastFindTime", entry.getValue().lastFindTime);
@@ -275,7 +327,13 @@ public final class StructureRaceState extends PersistentState {
                 UUID uuid = p.getUuid("uuid");
                 if (uuid == null) continue;
                 PlayerPersistentData d = new PlayerPersistentData();
-                d.totalScore = p.getInt("totalScore");
+                d.personalScore = p.getInt("personalScore");
+                d.totalDistance = p.getDouble("totalDistance");
+                d.structuresFound = p.getInt("structuresFound");
+                d.structurePoints = p.getInt("structurePoints");
+                d.bestEventNameZh = nullableString(p, "bestEventNameZh");
+                d.bestEventNameEn = nullableString(p, "bestEventNameEn");
+                d.bestEventPoints = p.getInt("bestEventPoints");
                 d.won = p.getBoolean("won");
                 d.killCount = p.getInt("killCount");
                 d.lastFindTime = p.getLong("lastFindTime");
