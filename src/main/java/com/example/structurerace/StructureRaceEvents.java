@@ -1,5 +1,7 @@
 package com.example.structurerace;
 
+import com.mojang.datafixers.util.Pair;
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -25,6 +27,7 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.damage.DamageSource;
@@ -50,7 +53,7 @@ import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.registry.tag.TagKey;
+import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.scoreboard.Scoreboard;
 import net.minecraft.scoreboard.ScoreboardCriterion;
 import net.minecraft.scoreboard.ScoreboardObjective;
@@ -66,10 +69,13 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.TypedActionResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
+import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.gen.StructureAccessor;
+import net.minecraft.world.gen.chunk.ChunkGenerator;
 import net.minecraft.world.gen.structure.Structure;
 
 /**
@@ -169,10 +175,6 @@ public final class StructureRaceEvents {
     private static final int FIREWORK_WAVE_INTERVAL = 40;
     private static int fireworkWavesLeft = 0;
     private static int fireworkWaveTicks = 0;
-
-    /** 竞速目标结构 tag（用于迷路指引 locateStructure） */
-    private static final TagKey<Structure> RACE_STRUCTURES_TAG = TagKey.of(
-            RegistryKeys.STRUCTURE, new Identifier("structure_race", "race_structures"));
 
     private static final Formatting[] TEAM_COLORS = {
             Formatting.RED, Formatting.BLUE, Formatting.GREEN, Formatting.YELLOW,
@@ -399,7 +401,11 @@ public final class StructureRaceEvents {
                     if (pst.joinTicks >= StructureRaceConfig.JOIN_WAIT_TICKS) {
                         pst.pendingLobby = false;
                         removeWaitEffects(player); // 进入大厅：清除失明/缓慢，解除移动限制
-                        teleportToLobby(player);
+                        try {
+                            teleportToLobby(player);
+                        } catch (Exception e) {
+                            LOGGER.warn("[StructureRace] 传送玩家 {} 到大厅失败: {}", player.getEntityName(), e.getMessage());
+                        }
                         sendTitle(player, Lang.get(player, "§a欢迎来到结构竞速大厅！", "§aWelcome to the lobby!"),
                                 Lang.get(player, "§r请用指南针组队。", "§rUse the compass to join a team."),
                                 10, 60, 10);
@@ -568,14 +574,25 @@ public final class StructureRaceEvents {
             player.changeGameMode(GameMode.ADVENTURE);
             ensureLobbyGear(player);
             if (firstJoin) {
-                // 首次进服：先到主世界地底等待点加载世界数据（约 4 秒），再进大厅，
-                // 避免「主世界区块尚未生成完就跨维度传送到大厅」导致维度数据串台
-                state.pendingLobby = true;
-                state.joinTicks = 0;
-                teleportToWaitPoint(player);
-                giveSaturation(player);
-                giveWaitEffects(player); // 失明 + 缓慢，限制移动
-                return;
+                if (player.getServerWorld().getRegistryKey() == LOBBY_KEY) {
+                    // 重连且已直接出生在大厅维度（playerdata 记录了上次维度）：
+                    // 直接在大厅完成初始化，避免「JOIN 回调立即跨维度传送」导致实体索引残留/重复 UUID
+                    ensureLobbyPlatform(player.getServer());
+                    forceLoadChunks(player.getServerWorld(), new BlockPos(0, LOBBY_PLATFORM_Y, 0), 3);
+                    state.pendingLobby = false;
+                    player.setSpawnPoint(LOBBY_KEY, new BlockPos(0, LOBBY_PLATFORM_Y + 2, 0), 0.0f, true, false);
+                    sendLobbyHint(player);
+                    // 继续下方队伍/计分板逻辑（不 return）
+                } else {
+                    // 首次进服/主世界出生：先到主世界地底等待点加载世界数据（约 4 秒），再进大厅，
+                    // 避免「主世界区块尚未生成完就跨维度传送到大厅」导致维度数据串台
+                    state.pendingLobby = true;
+                    state.joinTicks = 0;
+                    teleportToWaitPoint(player);
+                    giveSaturation(player);
+                    giveWaitEffects(player); // 失明 + 缓慢，限制移动
+                    return;
+                }
             }
             // 死亡重生/重连：直接回大厅
             try {
@@ -655,8 +672,25 @@ public final class StructureRaceEvents {
         }
         // 比赛设置不再用命令方块站：管理员通过背包中的红石粉「设置修改器」或 /race settings 调整
         lobbyInitialized = true;
+        // 预加载大厅出生点周围区块（FULL 状态），确保玩家进入时区块数据就绪
+        forceLoadChunks(lobby, new BlockPos(0, LOBBY_PLATFORM_Y, 0), 3);
         LOGGER.info("[StructureRace] 大厅玻璃平台已生成 ({}x{}，y={}，含隐形屏障墙)",
                 LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_SIZE, LOBBY_PLATFORM_Y);
+    }
+
+    /**
+     * 同步加载以 pos 为中心、radius 圈半径内的 FULL 区块。
+     * 跨维度传送前调用，确保目标维度区块已完整生成并常驻内存，
+     * 客户端在维度切换后请求区块时能立即获得数据（避免虚空 / 视觉错乱）。
+     */
+    private static void forceLoadChunks(ServerWorld world, BlockPos pos, int radius) {
+        int cx = pos.getX() >> 4;
+        int cz = pos.getZ() >> 4;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                world.getChunk(cx + dx, cz + dz, ChunkStatus.FULL, true);
+            }
+        }
     }
 
     private static void placeBarrierWall(ServerWorld lobby, int x, int z) {
@@ -675,12 +709,17 @@ public final class StructureRaceEvents {
 
     /** 传送玩家到大厅玻璃平台中心 */
     private static void teleportToLobby(ServerPlayerEntity player) {
+        if (!canTeleport(player)) return; // 断线玩家跳过，避免 moveToWorld 残留实体
         ServerWorld lobby = player.getServer().getWorld(LOBBY_KEY);
         if (lobby == null) return;
         ensureLobbyPlatform(player.getServer());
+        BlockPos dest = new BlockPos(0, LOBBY_PLATFORM_Y + 2, 0);
+        // 关键：传送前同步加载出生点周围区块（FULL），避免客户端收到维度切换后
+        // 区块数据未就绪导致虚空 / 视觉错乱（XZ 锁定、实体残留主世界地形等）
+        forceLoadChunks(lobby, dest, 3);
         player.teleport(lobby, 0.5, LOBBY_PLATFORM_Y + 2, 0.5, player.getYaw(), player.getPitch());
         // 重生点改为大厅（脚在玻璃上方，避免重生时卡进玻璃方块）
-        player.setSpawnPoint(LOBBY_KEY, new BlockPos(0, LOBBY_PLATFORM_Y + 2, 0), 0.0f, true, false);
+        player.setSpawnPoint(LOBBY_KEY, dest, 0.0f, true, false);
     }
 
     /** 玩家不在大厅时传送到大厅（准备/结束阶段入场用） */
@@ -691,6 +730,7 @@ public final class StructureRaceEvents {
 
     /** 传送玩家到主世界出生点（比赛开始 / 观众进入主世界用） */
     private static void teleportToOverworldSpawn(ServerPlayerEntity player) {
+        if (!canTeleport(player)) return; // 断线玩家跳过，避免 moveToWorld 残留实体
         ServerWorld ow = player.getServer().getOverworld();
         BlockPos spawn = ow.getSpawnPos();
         player.teleport(ow, spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5,
@@ -755,6 +795,16 @@ public final class StructureRaceEvents {
                 player.getYaw(), player.getPitch());
         // 等待期间死亡重生点也设在等待区，避免意外死亡后掉出
         player.setSpawnPoint(World.OVERWORLD, w, 0.0f, true, false);
+        // 等待期间就预加载大厅区块：给服务端充足时间生成/加载，避免倒计时结束时才临时生成
+        try {
+            ServerWorld lobby = player.getServer().getWorld(LOBBY_KEY);
+            if (lobby != null) {
+                ensureLobbyPlatform(player.getServer());
+                forceLoadChunks(lobby, new BlockPos(0, LOBBY_PLATFORM_Y, 0), 3);
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[StructureRace] 预加载大厅区块失败: {}", e.getMessage());
+        }
     }
 
     /** 给予无限时长饱和（大厅 / 等待点使用，开赛时移除） */
@@ -1267,11 +1317,23 @@ public final class StructureRaceEvents {
     /** 发送 title（含子标题与渐入/停留/渐出） */
     private static void sendTitle(ServerPlayerEntity player, String title, String subtitle,
                                   int fadeIn, int stay, int fadeOut) {
-        player.networkHandler.sendPacket(new TitleFadeS2CPacket(fadeIn, stay, fadeOut));
-        player.networkHandler.sendPacket(new TitleS2CPacket(Text.literal(title)));
-        if (subtitle != null && !subtitle.isEmpty()) {
-            player.networkHandler.sendPacket(new SubtitleS2CPacket(Text.literal(subtitle)));
+        if (!canTeleport(player)) return; // 断线/未连接玩家跳过，避免 NPE
+        try {
+            player.networkHandler.sendPacket(new TitleFadeS2CPacket(fadeIn, stay, fadeOut));
+            player.networkHandler.sendPacket(new TitleS2CPacket(Text.literal(title)));
+            if (subtitle != null && !subtitle.isEmpty()) {
+                player.networkHandler.sendPacket(new SubtitleS2CPacket(Text.literal(subtitle)));
+            }
+        } catch (Exception e) {
+            // 发送途中玩家断开，忽略
         }
+    }
+
+    /** 玩家网络连接是否仍有效：跨维度传送/发包前检查，避免对已断线玩家执行 moveToWorld 留下残留实体 */
+    private static boolean canTeleport(ServerPlayerEntity player) {
+        return player != null && player.networkHandler != null
+                && player.networkHandler.isConnectionOpen()
+                && player.getServer() != null;
     }
 
     /** 发送 actionbar 提示 */
@@ -1710,10 +1772,34 @@ public final class StructureRaceEvents {
         BlockPos pos = player.getBlockPos();
 
         try {
-            // 用竞速结构 tag 一次性检索最近结构
-            BlockPos nearest = world.locateStructure(RACE_STRUCTURES_TAG, pos,
-                    StructureRaceConfig.HINT_SEARCH_RADIUS, false);
-            double dist = nearest == null ? -1 : Math.sqrt(nearest.getSquaredDistance(pos));
+            // 检索范围内最近的、尚未被任何队伍占有的竞速结构（已占有的实例不加分，直接排除）
+            BlockPos nearest = null;
+            double bestSq = Double.MAX_VALUE;
+            Registry<Structure> registry = world.getRegistryManager().get(RegistryKeys.STRUCTURE);
+            ChunkGenerator chunkGenerator = world.getChunkManager().getChunkGenerator();
+            for (RegistryKey<Structure> structKey : StructureRaceConfig.getTargetStructures()) {
+                RegistryEntry<Structure> entry = registry.getEntry(structKey).orElse(null);
+                if (entry == null) continue;
+                try {
+                    // 单结构检索（ChunkGenerator.locateStructure 接受 RegistryEntryList）
+                    Pair<BlockPos, RegistryEntry<Structure>> result = chunkGenerator.locateStructure(
+                            world, RegistryEntryList.of(entry), pos,
+                            StructureRaceConfig.HINT_SEARCH_RADIUS, false);
+                    if (result == null || result.getFirst() == null) continue;
+                    BlockPos candidate = result.getFirst();
+                    // 与计分逻辑一致的结构唯一标识：结构id:起始chunk坐标long（ChunkPos.toLong 编码 chunkX/Z）
+                    String uniqueId = structKey.getValue() + ":" + ChunkPos.toLong(candidate);
+                    if (saveState.globallyDiscoveredStructures.contains(uniqueId)) continue; // 已占有，排除
+                    double sq = candidate.getSquaredDistance(pos);
+                    if (sq < bestSq) {
+                        bestSq = sq;
+                        nearest = candidate;
+                    }
+                } catch (Exception ignored) {
+                    // 单个结构检索失败不影响其他结构
+                }
+            }
+            double dist = nearest == null ? -1 : Math.sqrt(bestSq);
 
             // 最近结构在 100 格以内：不做提示，1 分钟后再查（玩家很快就能自己找到）
             if (nearest != null && dist <= StructureRaceConfig.HINT_MIN_DISTANCE) {
@@ -1726,22 +1812,22 @@ public final class StructureRaceEvents {
             saveState.markDirty();
 
             if (nearest == null) {
-                // 检索半径内没有结构
+                // 检索半径内没有「未被占有」的结构
                 player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
                         "§e周围 " + StructureRaceConfig.HINT_SEARCH_RADIUS
-                                + " 格内暂未发现竞速结构，继续探索吧！§7（下次提示需 7 分钟后）§r",
-                        "§eNo race structures within " + StructureRaceConfig.HINT_SEARCH_RADIUS
+                                + " 格内没有尚未被占有的竞速结构，继续探索吧！§7（下次提示需 7 分钟后）§r",
+                        "§eNo unclaimed race structures within " + StructureRaceConfig.HINT_SEARCH_RADIUS
                                 + " blocks. Keep exploring!§7 (next hint in 7 min)§r")), false);
                 return;
             }
 
             // 给出具体坐标与距离提示（仅该玩家可见）
             player.sendMessage(Text.literal(StructureRaceConfig.BROADCAST_PREFIX + Lang.get(player,
-                    "§e最近的竞速结构在 §6(" + nearest.getX() + ", " + nearest.getZ()
+                    "§e最近的未占有竞速结构在 §6(" + nearest.getX() + ", " + nearest.getZ()
                             + ")§r，距离 §6" + (int) dist
                             + "§r 格（坐标 X=" + nearest.getX() + " Z=" + nearest.getZ()
                             + "），快去探索吧！§7（下次提示需 7 分钟后）§r",
-                    "§eNearest race structure: §6(" + nearest.getX() + ", " + nearest.getZ()
+                    "§eNearest unclaimed race structure: §6(" + nearest.getX() + ", " + nearest.getZ()
                             + ")§r, §6" + (int) dist + "§r blocks away (X=" + nearest.getX()
                             + " Z=" + nearest.getZ() + "). Go explore!§7 (next hint in 7 min)§r")), false);
         } catch (Exception e) {
@@ -2057,26 +2143,37 @@ public final class StructureRaceEvents {
         state.markDirty();
 
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            if (!canTeleport(player)) continue; // 已断线玩家跳过开赛传送，避免 moveToWorld 残留实体
             try {
-                player.getInventory().clear(); // 比赛开始清空背包，防止携带大厅物品/作弊物品
-                player.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
-                        spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());
-                // 重生点改为主世界（比赛期间死亡不回到大厅）
-                player.setSpawnPoint(World.OVERWORLD, spawnPos, 0.0f, true, false);
-                if (state.getTeamByMember(player.getUuid()) != null) {
-                    player.changeGameMode(GameMode.SURVIVAL);
-                } else {
-                    player.changeGameMode(GameMode.SPECTATOR);
+                // 跨维度传送：必须使用 moveToWorld 返回的新实体（旧引用在传送后已失效）
+                ServerPlayerEntity p = player;
+                if (player.getServerWorld() != overworld) {
+                    Entity moved = player.moveToWorld(overworld);
+                    if (!(moved instanceof ServerPlayerEntity sp)) {
+                        LOGGER.warn("[StructureRace] 玩家 {} 跨维度传送未返回玩家实体", player.getEntityName());
+                        continue;
+                    }
+                    p = sp;
                 }
-                player.removeStatusEffect(StatusEffects.SATURATION); // 开赛移除大厅饱和
+                if (!canTeleport(p)) continue;
+                p.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
+                        spawnPos.getZ() + 0.5, p.getYaw(), p.getPitch());
+                // 重生点改为主世界（比赛期间死亡不回到大厅）
+                p.setSpawnPoint(World.OVERWORLD, spawnPos, 0.0f, true, false);
+                if (state.getTeamByMember(p.getUuid()) != null) {
+                    p.changeGameMode(GameMode.SURVIVAL);
+                } else {
+                    p.changeGameMode(GameMode.SPECTATOR);
+                }
+                p.removeStatusEffect(StatusEffects.SATURATION); // 开赛移除大厅饱和
                 // 个人迷路指引：开局归零（无开局冷却），3 分钟无发现即提示
-                PlayerState ps = PLAYER_STATES.get(player.getUuid());
+                PlayerState ps = PLAYER_STATES.get(p.getUuid());
                 if (ps != null) {
                     ps.pendingLobby = false;
                     ps.joinTicks = 0;
                     ps.lastFindTime = now;
                 }
-                StructureRaceState.PlayerPersistentData pd = state.getPlayerData(player.getUuid());
+                StructureRaceState.PlayerPersistentData pd = state.getPlayerData(p.getUuid());
                 pd.lastFindTime = now;
             } catch (Exception e) {
                 LOGGER.warn("[StructureRace] 开赛处理玩家 {} 失败: {}", player.getEntityName(), e.getMessage());
@@ -2252,7 +2349,7 @@ public final class StructureRaceEvents {
         state.markDirty();
 
         // 观众（旁观者）加入队伍：传送回出生点
-        if (player.isSpectator()) {
+        if (player.isSpectator() && canTeleport(player)) {
             BlockPos spawnPos = server.getOverworld().getSpawnPos();
             player.teleport(server.getOverworld(), spawnPos.getX() + 0.5, spawnPos.getY(),
                     spawnPos.getZ() + 0.5, player.getYaw(), player.getPitch());

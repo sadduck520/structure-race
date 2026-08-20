@@ -346,7 +346,7 @@ public final class StructureRaceConfig {
 
         // === 主世界 - 水下 ===
         map.put(structKey("shipwreck"), 3);
-        map.put(structKey("shipwreck_beached"), 4);
+        map.put(structKey("shipwreck_beached"), 3);
         map.put(structKey("ocean_ruin_cold"), 3);
         map.put(structKey("ocean_ruin_warm"), 3);
         map.put(structKey("buried_treasure"), 6);
@@ -582,8 +582,8 @@ public final class StructureRaceConfig {
                 + "全员获得速度提升I\n"
                 + "§l【迷路指引】§r\n"
                 + "3分钟无任何发现，\n"
-                + "自动提示最近结构\n"
-                + "坐标与距离；\n"
+                + "自动提示最近未占有\n"
+                + "结构坐标与距离；\n"
                 + "提示后冷却7分钟。\n"
                 + "§l【防作弊】§r\n"
                 + "单次位移超50格视为\n"
@@ -725,7 +725,7 @@ public final class StructureRaceConfig {
                 + "§l【Lost guide】§r\n"
                 + "No discovery for 3 min\n"
                 + "auto-hints the nearest\n"
-                + "structure coords.\n"
+                + "unclaimed structure.\n"
                 + "7 min cooldown after\n"
                 + "each hint.\n"
                 + "§l【Anti-cheat】§r\n"
