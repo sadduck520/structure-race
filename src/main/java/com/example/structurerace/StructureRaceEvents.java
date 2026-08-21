@@ -38,6 +38,7 @@ import net.minecraft.entity.vehicle.BoatEntity;
 import net.minecraft.item.FilledMapItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.map.MapIcon;
 import net.minecraft.item.map.MapState;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
@@ -1081,12 +1082,12 @@ public final class StructureRaceEvents {
             sb.append("Distance: +1 per 500\nblocks (boats not\ncounted)\n\n");
             sb.append("Kills: +1 per 10 hostile\nmobs (ranged included)\n\n");
             sb.append("Dimensions: Nether +10\nEnd +20 (once per team)\n\n");
-            sb.append("Mansion: with map +50\nwithout map +30");
+            sb.append("Mansion: only Woodland\nExplorer Map +50\notherwise no points");
         } else {
             sb.append("里程：每500格+1分\n坐船行驶不计\n\n");
             sb.append("击杀：每10只敌对怪物\n+1分（含远程击杀）\n\n");
             sb.append("维度：首次进入下界+10\n首次进入末地+20\n（每队各一次）\n\n");
-            sb.append("府邸：有探险家地图+50\n无地图+30");
+            sb.append("府邸：仅林地探险家\n地图+50，否则不得分");
         }
         pages.add(sb.toString());
         openInfoBook(player, Lang.get(player, "积分映射", "Point List"), pages);
@@ -1970,10 +1971,10 @@ public final class StructureRaceEvents {
             // ===== 新结构！加分 =====
             team.discoveredStructures.add(uniqueId);
             saveState.globallyDiscoveredStructures.add(uniqueId);
-            // 林地府邸：背包有探险家地图（带探索标记） +50，否则 +30
+            // 林地府邸：仅持有【林地探险家地图】(filled_map 且地图数据带 MANSION 探索标记) +50，否则不得分
             int finalScore = scoreValue;
             if (structKey.getValue().getPath().equals("mansion")) {
-                finalScore = hasExplorerMap(player) ? 50 : 30;
+                finalScore = hasMansionExplorerMap(player) ? 50 : 0;
             }
             String structName = StructureRaceConfig.STRUCTURE_NAMES.getOrDefault(
                     structKey.getValue().getPath(), structKey.getValue().getPath());
@@ -1992,20 +1993,29 @@ public final class StructureRaceEvents {
 
             refreshTeamScoreboard(player.server, team);
 
-            broadcastScore(player, team, "发现" + structName, "Found " + structNameEn, finalScore, team.totalScore);
+            if (finalScore > 0) {
+                broadcastScore(player, team, "发现" + structName, "Found " + structNameEn, finalScore, team.totalScore);
+            } else {
+                // 未携带林地探险家地图：进入林地府邸不得分（结构仍记占有，防重复）
+                player.sendMessage(Text.literal(Lang.get(player,
+                        "§7未持有§e林地探险家地图§7，进入林地府邸不得分（该府邸已被占有）",
+                        "§7No §eWoodland Explorer Map§7 - no points (this mansion is now claimed)")), false);
+            }
 
             checkWinCondition(player, state, team, saveState);
             return;
         }
     }
 
-    /** 判断玩家背包中是否持有探险家地图（带探索标记的已填充地图） */
-    private static boolean hasExplorerMap(ServerPlayerEntity player) {
+    /** 判断玩家背包中是否持有【林地探险家地图】：filled_map 的地图数据带 MANSION 探索标记（其他探险家地图/藏宝图不计） */
+    private static boolean hasMansionExplorerMap(ServerPlayerEntity player) {
         for (ItemStack stack : player.getInventory().main) {
             if (stack.isEmpty() || !stack.isOf(Items.FILLED_MAP)) continue;
             MapState mapState = FilledMapItem.getMapState(stack, player.getServerWorld());
-            if (mapState != null && mapState.getIcons().iterator().hasNext()) {
-                return true;
+            if (mapState != null) {
+                for (MapIcon icon : mapState.getIcons()) {
+                    if (icon.getType() == MapIcon.Type.MANSION) return true;
+                }
             }
         }
         return false;

@@ -51,7 +51,7 @@
 | 里程 | 步行/飞行每 500 格 +1（坐船行驶不计；传送不计） | +1 / 500 格 |
 | 击杀 | 每击杀 10 只敌对怪物 +1（含远程击杀，上限 200 只） | +1 / 10 只 |
 | 维度 | 队伍首次进入下界 / 末地 | +10 / +20 |
-| 林地府邸 | 携带探险家地图 / 无地图 | +50 / +30 |
+| 林地府邸 | 仅持有**林地探险家地图** / 其他或无地图 | +50 / 0 |
 
 ### 结构分值 / Structure Points（完整）
 
@@ -59,7 +59,7 @@
 |---|---|---|
 | 远古城市 | Ancient City | 25 |
 | 堡垒遗迹 | Bastion Remnant | 18 |
-| 林地府邸（有地图/无地图） | Woodland Mansion (w/ map / w/o) | 50 / 30 |
+| 林地府邸（仅林地探险家地图） | Woodland Mansion (Woodland Explorer Map only) | 50 / 0 |
 | 末地城 | End City | 30 |
 | 要塞 | Stronghold | 30 |
 | 下界堡垒 | Nether Fortress | 15 |
@@ -78,7 +78,7 @@
 | 村庄(热带草原) | Savanna Village | 6 |
 | 村庄(雪原) | Snowy Village | 6 |
 | 村庄(针叶林) | Taiga Village | 6 |
-| 沉船(搁浅) | Shipwreck (Beached) | 4 |
+| 沉船(搁浅) | Shipwreck (Beached) | 3 |
 | 破损传送门 | Ruined Portal | 4 |
 | 破损传送门(沙漠) | Ruined Portal (Desert) | 4 |
 | 破损传送门(丛林) | Ruined Portal (Jungle) | 4 |

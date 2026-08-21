@@ -548,8 +548,8 @@ public final class StructureRaceConfig {
                 + "首次进入下界+10\n"
                 + "首次进入末地+20。\n"
                 + "§l【林地府邸】§r\n"
-                + "携带探险家地图+50\n"
-                + "无地图+30");
+                + "携带林地探险家地图\n"
+                + "+50，否则不得分。");
         pages.add("§l⑥ 常用指令§r\n"
                 + "§l【玩家】§r\n"
                 + "§1/race top§r 排名 §1time§r 时间\n"
@@ -603,14 +603,14 @@ public final class StructureRaceConfig {
                 + "展示玩家荣誉榜");
         pages.add("§l⑩ 结构分值一览§r\n"
                 + "远古城市25 堡垒遗迹18\n"
-                + "林地府邸30/50 末地城40\n"
+                + "林地府邸0/50 末地城40\n"
                 + "下界堡垒15 要塞30\n"
                 + "沙漠神殿8 雪屋12\n"
                 + "女巫小屋12 前哨站8\n"
                 + "丛林神庙12 古迹废墟12\n"
                 + "废弃矿井10 矿井恶地6\n"
                 + "海底神殿10 埋藏宝藏6\n"
-                + "沉船3/4 海底废墟3\n"
+                + "沉船3/3 海底废墟3\n"
                 + "破损传送门3 村庄5\n"
                 + "下界化石1");
         return pages;
@@ -689,8 +689,8 @@ public final class StructureRaceConfig {
                 + "Nether first time +10\n"
                 + "End first time +20\n"
                 + "§l【Mansion】§r\n"
-                + "With explorer map +50\n"
-                + "Without map +30");
+                + "Woodland Explorer Map\n"
+                + "+50; otherwise no pts");
         pages.add("§l6. Commands§r\n"
                 + "§l【Players】§r\n"
                 + "§1/race top§r §1/race time§r\n"
@@ -742,14 +742,14 @@ public final class StructureRaceConfig {
                 + "in 10s + fireworks");
         pages.add("§l10. Structure Points§r\n"
                 + "Ancient City 25, Bastion 18\n"
-                + "Mansion 30/50, End City 40\n"
+                + "Mansion 0/50, End City 40\n"
                 + "Fortress 15, Stronghold 30\n"
                 + "Desert Pyramid 8, Igloo 12\n"
                 + "Witch Hut 12, Outpost 8\n"
                 + "Jungle Pyramid 12, Mine 10\n"
                 + "Trail Ruins 12, Mesa Mine 6\n"
                 + "Monument 10, Buried 6\n"
-                + "Wreck 3/4, Ocean Ruin 3\n"
+                + "Wreck 3/3, Ocean Ruin 3\n"
                 + "Ruined Portal 3, Village 5\n"
                 + "Nether Fossil 1");
         return pages;
