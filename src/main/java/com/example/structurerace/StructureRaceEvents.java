@@ -1,7 +1,5 @@
 package com.example.structurerace;
 
-import com.mojang.datafixers.util.Pair;
-
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -53,7 +51,7 @@ import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.registry.entry.RegistryEntryList;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.scoreboard.Scoreboard;
 import net.minecraft.scoreboard.ScoreboardCriterion;
 import net.minecraft.scoreboard.ScoreboardObjective;
@@ -69,13 +67,11 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.TypedActionResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.gen.StructureAccessor;
-import net.minecraft.world.gen.chunk.ChunkGenerator;
 import net.minecraft.world.gen.structure.Structure;
 
 /**
@@ -176,6 +172,10 @@ public final class StructureRaceEvents {
     private static int fireworkWavesLeft = 0;
     private static int fireworkWaveTicks = 0;
 
+    /** 竞速目标结构 tag（用于迷路指引 locateStructure） */
+    private static final TagKey<Structure> RACE_STRUCTURES_TAG = TagKey.of(
+            RegistryKeys.STRUCTURE, new Identifier("structure_race", "race_structures"));
+
     private static final Formatting[] TEAM_COLORS = {
             Formatting.RED, Formatting.BLUE, Formatting.GREEN, Formatting.YELLOW,
             Formatting.LIGHT_PURPLE, Formatting.AQUA, Formatting.GOLD, Formatting.DARK_GREEN
@@ -267,6 +267,13 @@ public final class StructureRaceEvents {
         });
 
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            try {
+                // 服务器停止（服主掉线/正常退出）前先输出本局得分记录，
+                // 避免掉线重连后 SCORE_LOG 被清空导致掉线前的游戏记录丢失
+                dumpScoreLog(server);
+            } catch (Exception e) {
+                LOGGER.warn("[StructureRace] 停止时输出得分日志失败: {}", e.getMessage());
+            }
             try {
                 ServerWorld ow = server.getOverworld();
                 if (ow != null) {
@@ -1002,6 +1009,8 @@ public final class StructureRaceEvents {
             openProgressBook(player);
         } else if (StructureRaceNetworking.TYPE_LANGUAGE.equals(type)) {
             LanguageSelectorScreenHandler.open(player);
+        } else if (StructureRaceNetworking.TYPE_LEAD_ALERTS.equals(type)) {
+            toggleLeadAlertsRequest(player);
         }
     }
 
@@ -1347,8 +1356,11 @@ public final class StructureRaceEvents {
                 "§7提示：按 §eTab§7 查看组队 · 右键 §e指南针§r 选队 · §e下界之星§r 语言",
                 "§7Tip: §eTab§7 teams · right-click §ecompass§r pick team · §eN. star§r lang")), false);
         player.sendMessage(Text.literal(Lang.get(player,
-                "§7快捷键：§eK§r 规则书 · §eP§r 积分映射 · §eU§r 进度 · §eY§r 语言",
-                "§7Hotkeys: §eK§r guide · §eP§r points · §eU§r progress · §eY§r language")), false);
+                "§7快捷键：§eH§r 规则书 · §eP§r 积分映射 · §eU§r 进度 · §eY§r 语言",
+                "§7Hotkeys: §eH§r guide · §eP§r points · §eU§r progress · §eY§r language")), false);
+        player.sendMessage(Text.literal(Lang.get(player,
+                "§7反超提醒：§eK§r 切换 · §e/race alerts§r 也可设置（默认开启）",
+                "§7Lead alerts: §eK§r toggle · §e/race alerts§r too (default ON)")), false);
         player.sendMessage(Text.literal(Lang.get(player,
                 "§7指令：§e/race start§r 开始比赛 · §e/race settings§r 修改设置 · §e/race status§r 查看状态",
                 "§7Commands: §e/race start§r start · §e/race settings§r settings · §e/race status§r status")), false);
@@ -1673,19 +1685,19 @@ public final class StructureRaceEvents {
 
             if (cur < prev) { // 排名上升
                 if (cur == 1) { // 新领先者
-                    broadcastTitleLang(server,
+                    broadcastLeadAlertTitle(server,
                             "§e§l" + coloredTeamName(newLeaderId) + " 成为新的领先者！",
                             "§e§l" + coloredTeamNameEn(newLeaderId) + " is the new leader!");
-                    sendTitleToTeamMembers(server, newLeaderId,
+                    sendLeadAlertToTeamMembers(server, newLeaderId,
                             "§a§l恭喜成为新的领跑者！", "§a§lYou are the new leader!");
                     if (prevLeaderId != null && !prevLeaderId.equals(newLeaderId)) {
-                        sendTitleToTeamMembers(server, prevLeaderId,
+                        sendLeadAlertToTeamMembers(server, prevLeaderId,
                                 "§c§l" + coloredTeamName(newLeaderId) + " 超越了您，努力反超！",
                                 "§c§l" + coloredTeamNameEn(newLeaderId) + " overtook you. Fight back!");
                     }
                 } else { // 上升到第 N 名
                     String surpassedId = findTeamIdByRank(previousRankings, cur, t.teamId);
-                    sendTitleToTeamMembers(server, t.teamId,
+                    sendLeadAlertToTeamMembers(server, t.teamId,
                             "§a§l超越 " + (surpassedId != null ? coloredTeamName(surpassedId) : "对手")
                                     + "，成为第 " + cur + " 名！",
                             "§a§lPassed " + (surpassedId != null ? coloredTeamNameEn(surpassedId) : "rivals")
@@ -1693,12 +1705,12 @@ public final class StructureRaceEvents {
                 }
             } else { // 排名下降
                 if (prev == 1) { // 原第一被超越，鼓励反超
-                    sendTitleToTeamMembers(server, t.teamId,
+                    sendLeadAlertToTeamMembers(server, t.teamId,
                             "§c§l" + coloredTeamName(newLeaderId) + " 超越了您，努力反超！",
                             "§c§l" + coloredTeamNameEn(newLeaderId) + " overtook you. Fight back!");
                 } else { // 被某队超越，掉到第 N 名
                     String overtakerId = findTeamIdByRank(curRankings, cur - 1, null);
-                    sendTitleToTeamMembers(server, t.teamId,
+                    sendLeadAlertToTeamMembers(server, t.teamId,
                             "§c§l被 " + (overtakerId != null ? coloredTeamName(overtakerId) : "对手")
                                     + " 超越，掉到第 " + cur + " 名！",
                             "§c§lOvertaken by "
@@ -1753,6 +1765,80 @@ public final class StructureRaceEvents {
         }
     }
 
+    // ==================== 机制7 反超提醒（可开关） ====================
+
+    /** 主世界竞速状态（统一从 overworld 取，避免下界/末地维度产生独立实例） */
+    private static StructureRaceState raceStateOf(ServerPlayerEntity player) {
+        if (player == null || player.getServer() == null) return null;
+        return StructureRaceState.get(player.getServer().getOverworld());
+    }
+
+    /** 玩家是否开启反超提醒（默认开启；关闭后不再显示排名交换 title 与消息栏提示） */
+    private static boolean isLeadAlertsEnabled(ServerPlayerEntity player) {
+        StructureRaceState state = raceStateOf(player);
+        return state == null || state.getPlayerData(player.getUuid()).leadAlerts;
+    }
+
+    /** 切换某玩家反超提醒开关并返回新状态 */
+    private static boolean toggleLeadAlerts(ServerPlayerEntity player) {
+        StructureRaceState state = raceStateOf(player);
+        if (state == null) return true;
+        StructureRaceState.PlayerPersistentData d = state.getPlayerData(player.getUuid());
+        d.leadAlerts = !d.leadAlerts;
+        state.markDirty();
+        return d.leadAlerts;
+    }
+
+    /** 指令 /race alerts on|off：设置反超提醒开关并反馈 */
+    public static void setLeadAlerts(ServerPlayerEntity player, boolean on) {
+        StructureRaceState state = raceStateOf(player);
+        if (state == null) return;
+        StructureRaceState.PlayerPersistentData d = state.getPlayerData(player.getUuid());
+        d.leadAlerts = on;
+        state.markDirty();
+        sendLeadAlertsFeedback(player, on);
+    }
+
+    /** 快捷键 K：切换反超提醒开关并反馈 */
+    public static void toggleLeadAlertsRequest(ServerPlayerEntity player) {
+        if (player == null) return;
+        sendLeadAlertsFeedback(player, toggleLeadAlerts(player));
+    }
+
+    private static void sendLeadAlertsFeedback(ServerPlayerEntity player, boolean on) {
+        player.sendMessage(Text.literal(Lang.get(player,
+                on ? "§a反超提醒已开启：排名交换时屏幕与消息栏提示。"
+                   : "§7反超提醒已关闭：不再显示排名交换提示。",
+                on ? "§aLead alerts ON: rank changes shown on screen & chat."
+                   : "§7Lead alerts OFF: rank change alerts hidden.")), false);
+    }
+
+    /** 反超提醒：给单个玩家发 title + 消息栏提示（尊重个人开关） */
+    private static void sendLeadAlertTitle(ServerPlayerEntity player, String zh, String en) {
+        if (player == null || !isLeadAlertsEnabled(player)) return;
+        sendTitle(player, Lang.get(player, zh, en), "", 10, 40, 20);
+        player.sendMessage(Text.literal(Lang.get(player,
+                "§7[排名] " + zh, "§7[Rank] " + en)), false);
+    }
+
+    /** 反超提醒：给某队伍在线成员发送（尊重个人开关） */
+    private static void sendLeadAlertToTeamMembers(MinecraftServer server, String teamId, String zh, String en) {
+        StructureRaceState state = StructureRaceState.get(server.getOverworld());
+        StructureRaceState.TeamData team = state.getTeam(teamId);
+        if (team == null) return;
+        for (UUID uuid : team.members) {
+            ServerPlayerEntity p = server.getPlayerManager().getPlayer(uuid);
+            if (p != null) sendLeadAlertTitle(p, zh, en);
+        }
+    }
+
+    /** 反超提醒：全服发送（尊重个人开关） */
+    private static void broadcastLeadAlertTitle(MinecraftServer server, String zh, String en) {
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            sendLeadAlertTitle(p, zh, en);
+        }
+    }
+
     // ==================== 机制6：迷路指引 ====================
 
     private static void maybeGiveDirectionHint(ServerPlayerEntity player, StructureRaceState saveState) {
@@ -1772,38 +1858,42 @@ public final class StructureRaceEvents {
         BlockPos pos = player.getBlockPos();
 
         try {
-            // 检索范围内最近的、尚未被任何队伍占有的竞速结构（已占有的实例不加分，直接排除）
-            BlockPos nearest = null;
-            double bestSq = Double.MAX_VALUE;
-            Registry<Structure> registry = world.getRegistryManager().get(RegistryKeys.STRUCTURE);
-            ChunkGenerator chunkGenerator = world.getChunkManager().getChunkGenerator();
-            for (RegistryKey<Structure> structKey : StructureRaceConfig.getTargetStructures()) {
-                RegistryEntry<Structure> entry = registry.getEntry(structKey).orElse(null);
-                if (entry == null) continue;
-                try {
-                    // 单结构检索（ChunkGenerator.locateStructure 接受 RegistryEntryList）
-                    Pair<BlockPos, RegistryEntry<Structure>> result = chunkGenerator.locateStructure(
-                            world, RegistryEntryList.of(entry), pos,
-                            StructureRaceConfig.HINT_SEARCH_RADIUS, false);
-                    if (result == null || result.getFirst() == null) continue;
-                    BlockPos candidate = result.getFirst();
-                    // 与计分逻辑一致的结构唯一标识：结构id:起始chunk坐标long（ChunkPos.toLong 编码 chunkX/Z）
-                    String uniqueId = structKey.getValue() + ":" + ChunkPos.toLong(candidate);
-                    if (saveState.globallyDiscoveredStructures.contains(uniqueId)) continue; // 已占有，排除
-                    double sq = candidate.getSquaredDistance(pos);
-                    if (sq < bestSq) {
-                        bestSq = sq;
-                        nearest = candidate;
-                    }
-                } catch (Exception ignored) {
-                    // 单个结构检索失败不影响其他结构
-                }
-            }
-            double dist = nearest == null ? -1 : Math.sqrt(bestSq);
+            // 用竞速结构 tag 一次性检索最近结构（性能安全：单次调用，成本 ≈ vanilla /locate）
+            BlockPos nearest = world.locateStructure(RACE_STRUCTURES_TAG, pos,
+                    StructureRaceConfig.HINT_SEARCH_RADIUS, false);
+            double dist = nearest == null ? -1 : Math.sqrt(nearest.getSquaredDistance(pos));
 
             // 最近结构在 100 格以内：不做提示，1 分钟后再查（玩家很快就能自己找到）
             if (nearest != null && dist <= StructureRaceConfig.HINT_MIN_DISTANCE) {
                 return;
+            }
+
+            // 若最近结构已被某队伍占有（过去不加分），用 skipReferenced=true 二次检索：
+            // 跳过已生成/已探索（已引用）的结构，找「未引用（未占有）」的候选
+            if (nearest != null) {
+                StructureStart start = world.getStructureAccessor()
+                        .getStructureContaining(nearest, RACE_STRUCTURES_TAG);
+                boolean claimed = false;
+                if (start != null) {
+                    RegistryEntry<Structure> entry = world.getRegistryManager()
+                            .get(RegistryKeys.STRUCTURE).getEntry(start.getStructure());
+                    if (entry.getKey().isPresent()) {
+                        // 与计分逻辑一致的结构唯一标识：结构id:起始chunk坐标long
+                        String uniqueId = entry.getKey().get().getValue() + ":" + start.getPos().toLong();
+                        claimed = saveState.globallyDiscoveredStructures.contains(uniqueId);
+                    }
+                }
+                if (claimed) {
+                    BlockPos unclaimed = world.locateStructure(RACE_STRUCTURES_TAG, pos,
+                            StructureRaceConfig.HINT_SEARCH_RADIUS, true);
+                    if (unclaimed != null) {
+                        nearest = unclaimed;
+                        dist = Math.sqrt(nearest.getSquaredDistance(pos));
+                        if (dist <= StructureRaceConfig.HINT_MIN_DISTANCE) return;
+                    } else {
+                        nearest = null;
+                    }
+                }
             }
 
             // 给出指引：进入 7 分钟个人冷却（把 lastFindTime 移到未来），并持久化
@@ -2158,6 +2248,7 @@ public final class StructureRaceEvents {
                 if (!canTeleport(p)) continue;
                 p.teleport(overworld, spawnPos.getX() + 0.5, spawnPos.getY(),
                         spawnPos.getZ() + 0.5, p.getYaw(), p.getPitch());
+                p.getInventory().clear(); // 比赛开始清空背包，防止携带大厅物品/作弊物品（作用于传送后的新实体）
                 // 重生点改为主世界（比赛期间死亡不回到大厅）
                 p.setSpawnPoint(World.OVERWORLD, spawnPos, 0.0f, true, false);
                 if (state.getTeamByMember(p.getUuid()) != null) {
@@ -2668,7 +2759,7 @@ public final class StructureRaceEvents {
     /** 将得分记录写入 structure_race_logs/scorelog_<时间戳>.txt */
     private static void writeScoreLogFile(String content) {
         try {
-            String stamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(LocalDateTime.now());
+            String stamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS").format(LocalDateTime.now());
             java.nio.file.Path dir = java.nio.file.Paths.get("structure_race_logs");
             java.nio.file.Files.createDirectories(dir);
             java.nio.file.Files.write(dir.resolve("scorelog_" + stamp + ".txt"),

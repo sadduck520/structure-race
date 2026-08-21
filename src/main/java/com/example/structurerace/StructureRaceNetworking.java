@@ -6,8 +6,8 @@ import net.minecraft.util.Identifier;
 /**
  * 结构竞速 - 网络协议（C2S）
  *
- * <p>客户端按键（K=规则书 / P=积分映射 / U=进度书）通过自定义通道发送请求，
- * 服务端收到后在主线程打开对应的书本（WrittenBook）。
+ * <p>客户端按键（H=规则书 / P=积分映射 / U=进度书 / K=反超提醒开关）通过自定义通道发送请求，
+ * 服务端收到后在主线程打开对应的书本（WrittenBook）或切换功能开关。
  *
  * <p>通道为「旧式」Fabric 网络 API（Identifier + PacketByteBuf），
  * 在 1.20.1 / Fabric API 0.92.x 下可用，且 yarn 映射完整。
@@ -23,8 +23,11 @@ public final class StructureRaceNetworking {
     /** 请求类型：打开进度书（/race progress 内容） */
     public static final String TYPE_PROGRESS = "progress";
 
-    /** 请求类型：打开语言选择界面（/language、快捷键 L） */
+    /** 请求类型：打开语言选择界面（/language、快捷键 Y） */
     public static final String TYPE_LANGUAGE = "language";
+
+    /** 请求类型：切换反超提醒开关（/race alerts、快捷键 K） */
+    public static final String TYPE_LEAD_ALERTS = "leadalerts";
 
     /** C2S 通道 ID：structure_race:open_book */
     public static final Identifier OPEN_BOOK = new Identifier(StructureRaceMod.MOD_ID, "open_book");

@@ -3,5 +3,6 @@
   "key.structure_race.rules": "查看规则书",
   "key.structure_race.point": "查看积分映射",
   "key.structure_race.progress": "查看竞速进度",
-  "key.structure_race.language": "切换语言"
+  "key.structure_race.language": "切换语言",
+  "key.structure_race.lead_alerts": "切换反超提醒"
 }

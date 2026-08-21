@@ -51,6 +51,10 @@ public final class StructureRaceCommand {
                                     .executes(ctx -> join(ctx))))
                     .then(CommandManager.literal("leave")
                             .executes(ctx -> leave(ctx)))
+                    .then(CommandManager.literal("alerts")
+                            .executes(ctx -> toggleAlerts(ctx))
+                            .then(CommandManager.literal("on").executes(ctx -> setAlerts(ctx, true)))
+                            .then(CommandManager.literal("off").executes(ctx -> setAlerts(ctx, false))))
                     .then(CommandManager.literal("point")
                             .executes(ctx -> point(ctx)))
                     .then(CommandManager.literal("progress")
@@ -111,6 +115,30 @@ public final class StructureRaceCommand {
     /** 管理员权限判断（OP 2） */
     private static boolean isOp(ServerCommandSource src) {
         return src.hasPermissionLevel(2);
+    }
+
+    // ==================== 反超提醒开关 ====================
+
+    /** /race alerts（无参）：切换本玩家反超提醒开关 */
+    private static int toggleAlerts(CommandContext<ServerCommandSource> ctx) {
+        ServerPlayerEntity player = playerOf(ctx);
+        if (player == null) {
+            sendErrL(ctx, "该指令必须由玩家执行。", "This command must be run by a player.");
+            return 0;
+        }
+        StructureRaceEvents.toggleLeadAlertsRequest(player);
+        return 1;
+    }
+
+    /** /race alerts on|off：设置本玩家反超提醒开关 */
+    private static int setAlerts(CommandContext<ServerCommandSource> ctx, boolean on) {
+        ServerPlayerEntity player = playerOf(ctx);
+        if (player == null) {
+            sendErrL(ctx, "该指令必须由玩家执行。", "This command must be run by a player.");
+            return 0;
+        }
+        StructureRaceEvents.setLeadAlerts(player, on);
+        return 1;
     }
 
     // ==================== 语言 ====================

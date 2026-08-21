@@ -85,6 +85,9 @@ public final class StructureRaceState extends PersistentState {
 
         /** 玩家选择的语言（"zh_cn"/"en_us"；null 表示默认中文） */
         public String language;
+
+        /** 是否开启反超提醒（排名交换时的 title + 消息栏提示；默认开启，跨局保留） */
+        public boolean leadAlerts = true;
     }
 
     // ==================== 全局去重（跨队伍独占） ====================
@@ -269,6 +272,7 @@ public final class StructureRaceState extends PersistentState {
             if (entry.getValue().language != null) {
                 p.putString("language", entry.getValue().language);
             }
+            p.putBoolean("leadAlerts", entry.getValue().leadAlerts);
             p.put("structures", stringSetToNbt(entry.getValue().discoveredStructures));
             p.put("biomes", stringSetToNbt(entry.getValue().discoveredBiomes));
             players.add(p);
@@ -339,6 +343,8 @@ public final class StructureRaceState extends PersistentState {
                 d.lastFindTime = p.getLong("lastFindTime");
                 d.language = p.getString("language");
                 if (d.language.isEmpty()) d.language = null;
+                // 旧存档无 leadAlerts 键时默认开启
+                d.leadAlerts = !p.contains("leadAlerts") || p.getBoolean("leadAlerts");
                 d.discoveredStructures.addAll(readStringSet(p, "structures"));
                 d.discoveredBiomes.addAll(readStringSet(p, "biomes"));
                 state.playerData.put(uuid, d);
